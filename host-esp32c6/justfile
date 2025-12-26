@@ -1,6 +1,13 @@
-build:
-    just -f wat/justfile build
+export ESPFLASH_BAUD := "921600"
+
+build: build-wat
     cargo build --release
+
+build-wat:
+    just -f wat/justfile build
+
+run: build
+    cargo run --release
 
 clean:
     cargo clean

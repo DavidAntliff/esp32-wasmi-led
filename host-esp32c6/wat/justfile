@@ -1,12 +1,15 @@
 build:
-    wat2wasm 42.wat
-    wat2wasm memory.wat
-    wat2wasm minimal.wat
+    wasm-tools parse 42.wat -o 42.wasm
+    wasm-tools parse memory.wat -o memory.wasm
+    wasm-tools parse minimal.wat -o minimal.wasm
 
 clean:
     rm -f *.wasm
 
-print:
+print: install-deps
     wasm-tools print 42.wat
     wasm-tools print memory.wat
     wasm-tools print minimal.wat
+
+install-deps:
+    cargo install wasm-tools
