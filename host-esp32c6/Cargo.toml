@@ -22,7 +22,8 @@ rtt-target       = { version = "0.6.2", features = ["defmt"] }
 
 esp-println = { version = "0.16.1", features = ["esp32c6"] }
 wasmi = { version = "1.0.4", default-features = false, features = ["prefer-btree-collections"] }
-
+spin = "0.10.0"
+portable-atomic-util = { version = "0.2.4", features = ["alloc"] }
 
 [profile.dev]
 # Rust debug is too slow.
