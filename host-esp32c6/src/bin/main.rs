@@ -6,30 +6,36 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use core::sync::atomic::Ordering;
-use core::sync::atomic::AtomicU32;
+extern crate alloc;
 use blinksy::color::ColorCorrection;
 use blinksy::driver::Driver;
-//use defmt::info;
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering;
 use esp_hal::clock::CpuClock;
 use esp_hal::main;
 use esp_hal::time::Instant;
-use panic_rtt_target as _;
 use esp_println::println;
+use panic_rtt_target as _;
 use spin::Mutex;
-
-extern crate alloc;
+use wasmi::{Engine, Linker, Module, Store};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
 
+// A macro that calls defmt::info!() as well as println!()
+macro_rules! log {
+    ($($arg:tt)*) => {{
+        defmt::info!($($arg)*);
+        println!($($arg)*);
+    }};
+}
+
 #[main]
 fn main() -> ! {
-    // generator version: 1.0.1
-    println!("🦀 WASM Host Demo - Fibonacci Generator (wasmi Runtime)");
-
     rtt_target::rtt_init_defmt!();
+
+    log!("🦀 WASM Host Demo - Fibonacci Generator (wasmi Runtime)");
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
@@ -44,11 +50,11 @@ fn main() -> ! {
     loop {}
 }
 
-use wasmi::{Engine, Linker, Module, Store};
-
 fn run_wasm(led_driver: impl Driver<Word = u8> + Send + Sync + 'static) {
     // 1. Embed the Wasm binary as a byte array
-    let wasm_bytes = include_bytes!("../../../guest-fibonacci/target/wasm32-unknown-unknown/release/guest_fibonacci.wasm");
+    let wasm_bytes = include_bytes!(
+        "../../../guest-fibonacci/target/wasm32-unknown-unknown/release/guest_fibonacci.wasm"
+    );
     //let wasm_bytes = include_bytes!("../../../guest-fibonacci/target/wasm32-unknown-unknown/release/guest_fibonacci_opt.wasm");
     //let wasm_bytes = include_bytes!("../../../guest-fibonacci/target/wasm32v1-none/release/guest_fibonacci.wasm");
     //let wasm_bytes = include_bytes!("../../wat/minimal.wasm");
@@ -56,24 +62,26 @@ fn run_wasm(led_driver: impl Driver<Word = u8> + Send + Sync + 'static) {
     //let wasm_bytes = include_bytes!("../../wat/memory.wasm");
 
     // 2. Set up the wasmi engine and store
-    println!("Initialising engine...");
+    log!("Initialising engine...");
     let engine = Engine::default();
-    println!("Initialising module...");
+    log!("Initialising module...");
     let module = Module::new(&engine, wasm_bytes).expect("Failed to create module");
-    println!("Initialising store...");
+    log!("Initialising store...");
     let mut store = Store::new(&engine, ());
-    println!("Initialising linker...");
+    log!("Initialising linker...");
     let mut linker = Linker::<()>::new(&engine);
 
     let count = AtomicU32::new(0);
 
     // Define the host function that the WASM module can call
-    linker.func_wrap("env", "output", move |num: u64| {
-        let c = count.fetch_add(1, Ordering::Relaxed) + 1;
-        if c % 10_000 == 0 {
-            println!("-- Calculated {} Fibonacci numbers -- {num}", c);
-        }
-    }).expect("Failed to define host function");
+    linker
+        .func_wrap("env", "output", move |num: u64| {
+            let c = count.fetch_add(1, Ordering::Relaxed) + 1;
+            if c % 10_000 == 0 {
+                log!("-- Calculated {} Fibonacci numbers -- {}", c, num);
+            }
+        })
+        .expect("Failed to define host function");
 
     const BUFFER_WIDTH: usize = 16;
     const BUFFER_HEIGHT: usize = 16;
@@ -85,77 +93,91 @@ fn run_wasm(led_driver: impl Driver<Word = u8> + Send + Sync + 'static) {
     let pixels = portable_atomic_util::Arc::new(Mutex::new(pixels));
 
     let pixels_clone = pixels.clone();
-    linker.func_wrap("env", "set_pixel", move |x: u32, y: u32, r: u32, g: u32, b: u32| {
-        //println!("set_pixel called: x={}, y={}, value={}", x, y, value);
-        let mut pixels = pixels_clone.lock();
-        let i = 3 * ((y as usize) * BUFFER_WIDTH + (x as usize));
-        pixels[i + 0] = g as u8;  // G
-        pixels[i + 1] = r as u8;  // R
-        pixels[i + 2] = b as u8;  // B
-    }).expect("Failed to define host function");
+    linker
+        .func_wrap(
+            "env",
+            "set_pixel",
+            move |x: u32, y: u32, r: u32, g: u32, b: u32| {
+                //log!("set_pixel called: x={}, y={}, value={}", x, y, value);
+                let mut pixels = pixels_clone.lock();
+                let i = 3 * ((y as usize) * BUFFER_WIDTH + (x as usize));
+                pixels[i + 0] = g as u8; // G
+                pixels[i + 1] = r as u8; // R
+                pixels[i + 2] = b as u8; // B
+            },
+        )
+        .expect("Failed to define host function");
 
     let pixels_clone = pixels.clone();
-    linker.func_wrap("env", "fill", move |r: u32, g: u32, b: u32| {
-        //println!("fill called: r={r}, g={g}, b={b}");
-        let mut pixels = pixels_clone.lock();
-        for y in 0..BUFFER_HEIGHT {
-            for x in 0..BUFFER_WIDTH {
-                let i = 3 * (y * BUFFER_WIDTH + x);
-                pixels[i + 0] = g as u8;  // G
-                pixels[i + 1] = r as u8;  // R
-                pixels[i + 2] = b as u8;  // B
+    linker
+        .func_wrap("env", "fill", move |r: u32, g: u32, b: u32| {
+            //log!("fill called: r={}, g={}, b={}", r, g, b);
+            let mut pixels = pixels_clone.lock();
+            for y in 0..BUFFER_HEIGHT {
+                for x in 0..BUFFER_WIDTH {
+                    let i = 3 * (y * BUFFER_WIDTH + x);
+                    pixels[i + 0] = g as u8; // G
+                    pixels[i + 1] = r as u8; // R
+                    pixels[i + 2] = b as u8; // B
+                }
             }
-        }
-    }).expect("Failed to define host function");
+        })
+        .expect("Failed to define host function");
 
     let led_driver = portable_atomic_util::Arc::new(Mutex::new(led_driver));
     let led_driver_clone = led_driver.clone();
 
     let pixels_clone = pixels.clone();
-    linker.func_wrap("env", "update", move || {
-        //println!("update called);
-        let pixels = pixels_clone.lock();
-        let mut driver = led_driver_clone.lock();
-        let _ = driver.write(pixels.clone(), 1.0, ColorCorrection::default());
-    }).expect("Failed to define host function");
+    linker
+        .func_wrap("env", "update", move || {
+            //log!("update called);
+            let pixels = pixels_clone.lock();
+            let mut driver = led_driver_clone.lock();
+            let _ = driver.write(pixels.clone(), 1.0, ColorCorrection::default());
+        })
+        .expect("Failed to define host function");
 
     // 3. Instantiate the module
-    println!("Instantiating instance...");
-    let instance = linker.instantiate_and_start(&mut store, &module).expect("Failed to instantiate module");
+    log!("Instantiating instance...");
+    let instance = linker
+        .instantiate_and_start(&mut store, &module)
+        .expect("Failed to instantiate module");
 
     // Get the 'fib' function from the WASM module
-    println!("Fetching 'fib' function...");
+    log!("Fetching 'fib' function...");
     let fib_func = instance
         .get_typed_func::<u64, u64>(&mut store, "fib")
         .expect("Failed to get 'fib' function");
 
-    println!("Fetching 'add' function...");
+    log!("Fetching 'add' function...");
     let add_func = instance
         .get_typed_func::<(i32, i32), i32>(&mut store, "add")
         .expect("Failed to get 'add' function");
 
-    println!("Fetching 'fill' function...");
+    log!("Fetching 'fill' function...");
     let fill_slow_func = instance
         .get_typed_func::<(u32, u32, u32, u32, u32), ()>(&mut store, "fill_slow")
         .expect("Failed to get 'fill_slow' function");
 
-    println!("Fetching 'render' function...");
+    log!("Fetching 'render' function...");
     let render_func = instance
         .get_typed_func::<(u32, u32, u32), ()>(&mut store, "render")
         .expect("Failed to get 'render' function");
 
     // Call the 'add' function as a quick test
-    println!("Calling 'add' function...");
-    let result = add_func.call(&mut store, (41, 1)).expect("Failed to call 'add' function");
-    println!("add(41, 1) returned: {result}");
+    log!("Calling 'add' function...");
+    let result = add_func
+        .call(&mut store, (41, 1))
+        .expect("Failed to call 'add' function");
+    log!("add(41, 1) returned: {}", result);
 
     // // Call the 'fill' function to start the Fibonacci sequence
-    // println!("Calling 'fill_slow' function...");
+    // log!("Calling 'fill_slow' function...");
     // let start = Instant::now();
     // fill_slow_func.call(&mut store, (16, 16, 255, 0, 0)).expect("Failed to call 'fill_slow' function");
     // let duration = start.elapsed();
-    // println!("fill_slow(16, 16, 255, 0, 0) returned: {duration}");
-    // //println!("{buffer:?}");
+    // log!("fill_slow(16, 16, 255, 0, 0) returned: {}", duration);
+    // //log!("{:?}", buffer);
 
     const TARGET_FRAMES: u32 = 300;
 
@@ -167,7 +189,7 @@ fn run_wasm(led_driver: impl Driver<Word = u8> + Send + Sync + 'static) {
     // }
     // let duration = start.elapsed();
     // let fps = TARGET_FRAMES as f32 / (duration.as_micros() as f32 / 1_000_000.0);
-    // println!("{TARGET_FRAMES} * fill(8, 8, _) took: {duration}, {fps} fps");
+    // log!("{TARGET_FRAMES} * fill(8, 8, _) took: {}, {} fps", duration, fps);
 
     // Measure time to fill multiple times at 16x16
     // let start = Instant::now();
@@ -176,32 +198,40 @@ fn run_wasm(led_driver: impl Driver<Word = u8> + Send + Sync + 'static) {
     // }
     // let duration = start.elapsed();
     // let fps = TARGET_FRAMES as f32 / (duration.as_micros() as f32 / 1_000_000.0);
-    // println!("{TARGET_FRAMES} * fill(16, 16, _) took: {duration}, {fps} fps");
+    // log!("{TARGET_FRAMES} * fill(16, 16, _) took: {}, {} fps", duration, fps);
 
     // // Measure time to fill multiple times at 8x8
     // let start = Instant::now();
     // render_func.call(&mut store, (8, 8, TARGET_FRAMES)).expect("Failed to call 'render' function");
     // let duration = start.elapsed();
     // let fps = TARGET_FRAMES as f32 / (duration.as_micros() as f32 / 1_000_000.0);
-    // println!("render(8, 8, {TARGET_FRAMES}) took: {duration}, {fps} fps");
+    // log!("render(8, 8, {TARGET_FRAMES}) took: {}, {} fps", duration, fps);
 
     // Measure time to fill multiple times at 16x16
     let start = Instant::now();
-    render_func.call(&mut store, (16, 16, TARGET_FRAMES)).expect("Failed to call 'render' function");
+    render_func
+        .call(&mut store, (16, 16, TARGET_FRAMES))
+        .expect("Failed to call 'render' function");
     let duration = start.elapsed();
     let fps = TARGET_FRAMES as f32 / (duration.as_micros() as f32 / 1_000_000.0);
-    println!("render(16, 16, {TARGET_FRAMES}) took: {duration}, {fps} fps");
+    log!(
+        "render(16, 16, {}) took: {}, {} fps",
+        TARGET_FRAMES,
+        duration,
+        fps
+    );
 
     // Call the 'fib' function to start the Fibonacci sequence
-    println!("Calling 'fib' function...");
+    log!("Calling 'fib' function...");
     let start = Instant::now();
-    let result = fib_func.call(&mut store, 100_000).expect("Failed to call 'fib' function");
+    let result = fib_func
+        .call(&mut store, 100_000)
+        .expect("Failed to call 'fib' function");
     let duration = start.elapsed();
-    println!("fib(100_000_000) returned: {result}, {duration}");
+    log!("fib(100_000_000) returned: {}, {}", result, duration);
 }
 
 fn led_matrix(p: esp_hal::peripherals::Peripherals) -> impl Driver<Word = u8> {
-
     use blinksy::layout::Layout2d;
 
     blinksy::layout2d!(
@@ -217,9 +247,9 @@ fn led_matrix(p: esp_hal::peripherals::Peripherals) -> impl Driver<Word = u8> {
     );
 
     // Setup the WS2812 driver using RMT.
-    let mut ws2812_driver = {
-        // IMPORTANT: Change `p.GPIO16` to the GPIO pin connected to your WS2812 data line.
-        let data_pin = p.GPIO10;
+    let ws2812_driver = {
+        // IMPORTANT: Change `p.GPIO8` to the GPIO pin connected to your WS2812 data line.
+        let data_pin = p.GPIO8;
 
         // Initialize RMT peripheral (typical base clock 80 MHz).
         let rmt_clk_freq = esp_hal::time::Rate::from_mhz(80);
@@ -229,12 +259,14 @@ fn led_matrix(p: esp_hal::peripherals::Peripherals) -> impl Driver<Word = u8> {
         // Create the driver using the ClocklessRmt builder.
         blinksy::driver::ClocklessDriver::default()
             .with_led::<blinksy::leds::Ws2812>()
-            .with_writer(blinksy_esp::ClocklessRmtBuilder::default()
-                .with_rmt_buffer_size::<{ Layout::PIXEL_COUNT * 3 * 8 + 1 }>()
-                .with_led::<blinksy::leds::Ws2812>()
-                .with_channel(rmt_channel)
-                .with_pin(data_pin)
-                .build())
+            .with_writer(
+                blinksy_esp::ClocklessRmtBuilder::default()
+                    .with_rmt_buffer_size::<{ Layout::PIXEL_COUNT * 3 * 8 + 1 }>()
+                    .with_led::<blinksy::leds::Ws2812>()
+                    .with_channel(rmt_channel)
+                    .with_pin(data_pin)
+                    .build(),
+            )
     };
 
     // // Build the Blinky controller

@@ -806,7 +806,6 @@ version = "0.1.0"
 dependencies = [
  "blinksy",
  "blinksy-esp",
- "critical-section",
  "defmt 1.0.1",
  "esp-alloc",
  "esp-bootloader-esp-idf",
@@ -816,7 +815,6 @@ dependencies = [
  "panic-rtt-target",
  "portable-atomic-util",
  "rtt-target",
- "smart-leds",
  "spin 0.10.0",
  "wasmi",
 ]
@@ -1232,15 +1230,6 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
-]
-
-[[package]]
-name = "smart-leds"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66df34e571fa9993fa6f99131a374d58ca3d694b75f9baac93458fe0d6057bf0"
-dependencies = [
- "smart-leds-trait",
 ]
 
 [[package]]

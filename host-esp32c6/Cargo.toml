@@ -1,8 +1,8 @@
 [package]
-edition      = "2024"
-name         = "host-esp32c6"
+edition = "2024"
+name = "host-esp32c6"
 rust-version = "1.88"
-version      = "0.1.0"
+version = "0.1.0"
 
 [[bin]]
 name = "host-esp32c6"
@@ -11,14 +11,12 @@ path = "./src/bin/main.rs"
 [dependencies]
 esp-hal = { version = "1.0.0", features = ["defmt", "esp32c6"] }
 
-
-defmt                  = "1.0.1"
+defmt = "1.0.1"
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32c6"] }
 
-critical-section = "1.2.0"
-esp-alloc        = { version = "0.9.0", features = ["defmt"] }
+esp-alloc = { version = "0.9.0", features = ["defmt"] }
 panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
-rtt-target       = { version = "0.6.2", features = ["defmt"] }
+rtt-target = { version = "0.6.2", features = ["defmt"] }
 
 esp-println = { version = "0.16.1", features = ["esp32c6"] }
 wasmi = { version = "1.0.4", default-features = false, features = ["prefer-btree-collections"] }
@@ -27,7 +25,6 @@ portable-atomic-util = { version = "0.2.4", features = ["alloc"] }
 
 blinksy = "0.11.0"
 blinksy-esp = "0.11.0"
-smart-leds = "0.4.0"
 heapless = "0.9.1"  # same as blinksy
 
 [profile.dev]
@@ -36,10 +33,10 @@ heapless = "0.9.1"  # same as blinksy
 opt-level = "s"
 
 [profile.release]
-codegen-units    = 1     # LLVM can perform better optimizations using a single thread
-debug            = 2
+codegen-units = 1     # LLVM can perform better optimizations using a single thread
+debug = 2
 debug-assertions = false
-incremental      = false
-lto              = 'fat'
-opt-level        = 's'
-overflow-checks  = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
