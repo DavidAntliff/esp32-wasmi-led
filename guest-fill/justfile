@@ -14,11 +14,11 @@ opt: build
         --coalesce-locals \
         --flatten \
         --local-cse \
-        -o target/wasm32-unknown-unknown/release/guest_fibonacci_opt.wasm \
-        target/wasm32-unknown-unknown/release/guest_fibonacci.wasm
+        -o target/wasm32-unknown-unknown/release/guest_fill_opt.wasm \
+        target/wasm32-unknown-unknown/release/guest_fill.wasm
 
 print:
-    wasm-tools print target/wasm32-unknown-unknown/release/guest_fibonacci.wasm
+    wasm-tools print target/wasm32-unknown-unknown/release/guest_fill.wasm
 
 clean:
     cargo clean

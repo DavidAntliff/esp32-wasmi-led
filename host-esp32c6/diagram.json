@@ -37,7 +37,7 @@
       []
     ],
     [
-      "esp:8",
+      "esp:10",
       "neopixels:DIN",
       "green",
       [

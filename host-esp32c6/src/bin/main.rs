@@ -19,6 +19,8 @@ use panic_rtt_target as _;
 use spin::Mutex;
 use wasmi::{Engine, Linker, Module, Store};
 
+use host_esp32c6::pattern_white_block::{WhiteBlock, WhiteBlockParams};
+
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -35,7 +37,7 @@ macro_rules! log {
 fn main() -> ! {
     rtt_target::rtt_init_defmt!();
 
-    log!("🦀 WASM Host Demo - Fibonacci Generator (wasmi Runtime)");
+    log!("🦀 WASM LED Matrix Host");
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
@@ -45,21 +47,15 @@ fn main() -> ! {
 
     let led_driver = led_matrix(peripherals);
 
-    run_wasm(led_driver);
+    //run_wasm(led_driver);
 
     loop {}
 }
 
 fn run_wasm(led_driver: impl Driver<Word = u8> + Send + Sync + 'static) {
     // 1. Embed the Wasm binary as a byte array
-    let wasm_bytes = include_bytes!(
-        "../../../guest-fibonacci/target/wasm32-unknown-unknown/release/guest_fibonacci.wasm"
-    );
-    //let wasm_bytes = include_bytes!("../../../guest-fibonacci/target/wasm32-unknown-unknown/release/guest_fibonacci_opt.wasm");
-    //let wasm_bytes = include_bytes!("../../../guest-fibonacci/target/wasm32v1-none/release/guest_fibonacci.wasm");
-    //let wasm_bytes = include_bytes!("../../wat/minimal.wasm");
-    //let wasm_bytes = include_bytes!("../../wat/42.wasm");
-    //let wasm_bytes = include_bytes!("../../wat/memory.wasm");
+    let wasm_bytes =
+        include_bytes!("../../../guest-fill/target/wasm32-unknown-unknown/release/guest_fill.wasm");
 
     // 2. Set up the wasmi engine and store
     log!("Initialising engine...");
@@ -247,9 +243,9 @@ fn led_matrix(p: esp_hal::peripherals::Peripherals) -> impl Driver<Word = u8> {
     );
 
     // Setup the WS2812 driver using RMT.
-    let ws2812_driver = {
+    let mut ws2812_driver = {
         // IMPORTANT: Change `p.GPIO8` to the GPIO pin connected to your WS2812 data line.
-        let data_pin = p.GPIO8;
+        let data_pin = p.GPIO10;
 
         // Initialize RMT peripheral (typical base clock 80 MHz).
         let rmt_clk_freq = esp_hal::time::Rate::from_mhz(80);
@@ -269,35 +265,70 @@ fn led_matrix(p: esp_hal::peripherals::Peripherals) -> impl Driver<Word = u8> {
             )
     };
 
-    // // Build the Blinky controller
-    // let mut control = blinksy::ControlBuilder::new_2d()
-    //     .with_layout::<Layout, { Layout::PIXEL_COUNT }>()
-    //     .with_pattern::<blinksy::patterns::rainbow::Rainbow>(blinksy::patterns::rainbow::RainbowParams {
-    //         ..Default::default()
-    //     })
-    //     .with_driver(ws2812_driver)
-    //     .with_frame_buffer_size::<{ blinksy::leds::Ws2812::frame_buffer_size(Layout::PIXEL_COUNT) }>()
-    //     .build();
-    //
-    // control.set_brightness(0.2); // Set initial brightness (0.0 to 1.0)
-    //
-    // loop {
-    //     let elapsed_in_ms = blinksy_esp::time::elapsed().as_millis();
-    //     control.tick(elapsed_in_ms).unwrap();
-    // }
+    // Build the Blinky controller
+    let mut control = blinksy::ControlBuilder::new_2d()
+        .with_layout::<Layout, { Layout::PIXEL_COUNT }>()
+        .with_pattern::<blinksy::patterns::rainbow::Rainbow>(blinksy::patterns::rainbow::RainbowParams {
+            // time_scalar: 1.0 / 1000.0,
+            // position_scalar: 2.0,
+            ..Default::default()
+            // .with_pattern::<WhiteBlock>(WhiteBlockParams {
+            //     // x_min: -1.0,
+            //     // x_max: 1.0,
+            //     ..Default::default()
+        })
+        .with_driver(ws2812_driver)
+        .with_frame_buffer_size::<{ blinksy::leds::Ws2812::frame_buffer_size(Layout::PIXEL_COUNT) }>()
+        .build();
+
+    control.set_brightness(0.3); // Set initial brightness (0.0 to 1.0)
+
+    let mut frame_count = 0usize;
+    loop {
+        let elapsed_in_ms = blinksy_esp::time::elapsed().as_millis();
+        control.tick(elapsed_in_ms).unwrap();
+        frame_count += 1;
+
+        // let mut delay = esp_hal::delay::Delay::new();
+        // delay.delay_millis(21 as u32); // 21ms delay = ~30 fps
+
+        // if frame_count.is_multiple_of(100) {
+        //     let fps = frame_count as f32 / elapsed_in_ms as f32 * 1000.0;
+        //     defmt::info!(
+        //         "Frame count {}, time {}, fps: {}",
+        //         frame_count,
+        //         elapsed_in_ms,
+        //         fps
+        //     );
+        // }
+    }
 
     // TODO: maybe we create a custom Pattern instead, have the wasm modify it, and let the Control
     //       handle the driver writing?
 
     // RED TEST PIXEL:
+    // defmt::warn!("RED PIXEL!");
     // let mut buffer: heapless::Vec<u8, { 256 * 3 }> = heapless::Vec::new();
     // buffer.resize(256 * 3, 0).unwrap();
+
+    // buffer[0] = 0; // G
+    // buffer[1] = 255; // R
+    // buffer[2] = 255; // B
     //
-    // buffer[0] = 0;    // G
-    // buffer[1] = 255;  // R
-    // buffer[2] = 0;    // B
+    // ws2812_driver
+    //     .write(buffer.clone(), 1.0, ColorCorrection::default())
+    //     .unwrap();
+
+    // defmt::warn!("TEST PATTERN!");
+    // for i in 0..8 {
+    //     buffer[i * 3 + 0] = 16; // G
+    //     buffer[i + 3 + 1] = 16; // R
+    //     buffer[i * 3 + 2] = 16; // B
+    // }
     //
-    // ws2812_driver.write(buffer, 1.0, ColorCorrection::default()).unwrap();
+    // ws2812_driver
+    //     .write(buffer.clone(), 1.0, ColorCorrection::default())
+    //     .unwrap();
 
     ws2812_driver
 }

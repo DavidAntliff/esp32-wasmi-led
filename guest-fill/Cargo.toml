@@ -1,13 +1,12 @@
 [package]
-name = "guest-fibonacci"
+name = "guest-fill"
 version = "0.1.0"
-edition = "2021"
+edition = "2021"  # TODO: update to 2024
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-# No dependencies needed for this simple example
 
 [profile.release]
 lto = "fat"
