@@ -19,6 +19,7 @@ use panic_rtt_target as _;
 use spin::Mutex;
 use wasmi::{Engine, Linker, Module, Store};
 
+use host_esp32c6::pattern_rainbow::{Rainbow, RainbowParams};
 use host_esp32c6::pattern_white_block::{WhiteBlock, WhiteBlockParams};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -268,20 +269,26 @@ fn led_matrix(p: esp_hal::peripherals::Peripherals) -> impl Driver<Word = u8> {
     // Build the Blinky controller
     let mut control = blinksy::ControlBuilder::new_2d()
         .with_layout::<Layout, { Layout::PIXEL_COUNT }>()
-        .with_pattern::<blinksy::patterns::rainbow::Rainbow>(blinksy::patterns::rainbow::RainbowParams {
+        .with_pattern::<Rainbow>(RainbowParams {
             // time_scalar: 1.0 / 1000.0,
             // position_scalar: 2.0,
+            // x_min: -1.0,
+            // x_max: -0.8,
+            // y_min: -1.0,
+            // y_max: -0.8,
             ..Default::default()
-            // .with_pattern::<WhiteBlock>(WhiteBlockParams {
-            //     // x_min: -1.0,
-            //     // x_max: 1.0,
-            //     ..Default::default()
+        //     .with_pattern::<WhiteBlock>(WhiteBlockParams {
+        //         x_min: -1.0,
+        //         x_max: 0.0,
+        //         y_min: -1.0,
+        //         y_max: 0.0,
+        //         ..Default::default()
         })
         .with_driver(ws2812_driver)
         .with_frame_buffer_size::<{ blinksy::leds::Ws2812::frame_buffer_size(Layout::PIXEL_COUNT) }>()
         .build();
 
-    control.set_brightness(0.3); // Set initial brightness (0.0 to 1.0)
+    control.set_brightness(0.2); // Set initial brightness (0.0 to 1.0)
 
     let mut frame_count = 0usize;
     loop {
@@ -302,6 +309,8 @@ fn led_matrix(p: esp_hal::peripherals::Peripherals) -> impl Driver<Word = u8> {
         //     );
         // }
     }
+
+    // In wokwi's model, top-left is -1, -1, centre is 0,0, bottom right is 1,1
 
     // TODO: maybe we create a custom Pattern instead, have the wasm modify it, and let the Control
     //       handle the driver writing?
