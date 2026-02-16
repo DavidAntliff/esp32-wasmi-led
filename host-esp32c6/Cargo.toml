@@ -9,7 +9,7 @@ name = "host-esp32c6"
 path = "./src/bin/main.rs"
 
 [dependencies]
-esp-hal = { version = "1.0.0", features = ["defmt", "esp32c6"] }
+esp-hal = { version = "1.0.0", features = ["defmt", "esp32c6", "unstable"] }
 
 defmt = "1.0.1"
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32c6"] }
@@ -23,9 +23,13 @@ wasmi = { version = "1.0.4", default-features = false, features = ["prefer-btree
 spin = "0.10.0"
 portable-atomic-util = { version = "0.2.4", features = ["alloc"] }
 
-blinksy = "0.11.0"
-blinksy-esp = "0.11.0"
-heapless = "0.9.1"  # same as blinksy
+#blinksy = "0.11.0"
+#blinksy-esp = "0.11.0"
+#heapless = "0.9.1"  # same as blinksy
+
+esp-hal-smartled2 = "0.28.1"
+smart-leds-trait = "0.3.2"
+smart-leds = "0.4.0"
 
 [profile.dev]
 # Rust debug is too slow.

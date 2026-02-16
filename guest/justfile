@@ -1,0 +1,34 @@
+build: build-assets
+    cargo build --release --target=wasm32-unknown-unknown
+
+build-assets:
+    mkdir -p target
+    convert assets/static-0001.png -depth 8 rgb:target/static-0001.raw
+    convert assets/anim-0001.gif -coalesce -depth 8 rgb:target/anim-0001_%03d.raw
+
+opt: build
+    # Needs: cargo install wasm-opt
+    wasm-opt \
+        -O3 \
+        --strip-debug \
+        --strip-producers \
+        --vacuum \
+        --remove-unused-module-elements \
+        --simplify-locals \
+        --reorder-locals \
+        --coalesce-locals \
+        --flatten \
+        --local-cse \
+        -o target/wasm32-unknown-unknown/release/guest_opt.wasm \
+        target/wasm32-unknown-unknown/release/guest.wasm
+
+print: build
+    wasm-tools print target/wasm32-unknown-unknown/release/guest.wasm
+
+clean:
+    cargo clean
+    rm -f assets/static-0001.raw
+
+ci:
+    cargo clippy -- -D warnings
+    cargo fmt --all -- --check
