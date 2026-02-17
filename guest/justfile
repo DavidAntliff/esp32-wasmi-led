@@ -1,3 +1,6 @@
+default:
+    just --list
+
 build: build-assets
     cargo build --release --target=wasm32-unknown-unknown
 
@@ -29,6 +32,6 @@ clean:
     cargo clean
     rm -f assets/static-0001.raw
 
-ci:
+ci: build-assets
     cargo clippy -- -D warnings
     cargo fmt --all -- --check

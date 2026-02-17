@@ -20,6 +20,6 @@ clean:
     just -f guest/justfile clean
     just -f host-esp32c6/justfile clean
 
-ci:
+ci: build-guest
     just -f guest/justfile ci
     just -f host-esp32c6/justfile ci

@@ -13,10 +13,10 @@ use esp_hal::clock::CpuClock;
 use esp_hal::main;
 use esp_hal::rmt::Rmt;
 use esp_hal::time::Instant;
-use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, Ws2812Timing};
+use esp_hal_smartled::{RmtSmartLeds, Ws2812Timing, buffer_size, color_order};
 use esp_println::println;
 use panic_rtt_target as _;
-use smart_leds::{brightness, gamma, SmartLedsWrite, RGB8};
+use smart_leds::{RGB8, SmartLedsWrite, brightness, gamma};
 use wasmi::{Engine, Linker, Memory, Module, Store, TypedFunc};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.

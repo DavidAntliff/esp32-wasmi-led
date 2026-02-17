@@ -1,5 +1,8 @@
 export ESPFLASH_BAUD := "921600"
 
+default:
+    just --list
+
 build:
     cargo build --release
 
@@ -8,3 +11,7 @@ run: build
 
 clean:
     cargo clean
+
+ci:
+    cargo clippy -- -D warnings
+    cargo fmt --all -- --check
