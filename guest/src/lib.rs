@@ -26,10 +26,10 @@ const TICKS_PER_SECOND: u64 = 256; // TODO: move to SDK
 
 const FPS: u64 = 60; // animation target speed
 
-const PIXEL_ROWS: usize = 16;
-const PIXEL_COLS: usize = 16;
+const PIXEL_HEIGHT: usize = 16;
+const PIXEL_WIDTH: usize = 16;
 const PIXEL_CHANNELS: usize = 3; // RGB
-const PIXEL_BUFFER_SIZE: usize = PIXEL_ROWS * PIXEL_COLS * PIXEL_CHANNELS;
+const PIXEL_BUFFER_SIZE: usize = PIXEL_HEIGHT * PIXEL_WIDTH * PIXEL_CHANNELS;
 
 // SAFETY: WASM is single-threaded, so this is safe
 struct SyncWrapper<T> {
@@ -52,6 +52,33 @@ static ANIM_0001_IMAGE_DATA: [&[u8; 768]; 6] = [
     include_bytes!("../target/anim-0001_004.raw"),
     include_bytes!("../target/anim-0001_005.raw"),
 ];
+
+#[inline(always)]
+fn offset(x: usize, y: usize) -> usize {
+    (y * PIXEL_WIDTH + x) * PIXEL_CHANNELS
+}
+
+#[inline(always)]
+fn set_color(buffer: *mut u8, (x, y): (usize, usize), (r, g, b): (u8, u8, u8)) {
+    if x >= PIXEL_WIDTH || y >= PIXEL_HEIGHT {
+        return; // Out of bounds
+    }
+    let offset = offset(x, y);
+    unsafe {
+        buffer.add(offset).write(r);
+        buffer.add(offset + 1).write(g);
+        buffer.add(offset + 2).write(b);
+    }
+}
+
+fn clear(buffer: *mut u8, color: (u8, u8, u8)) {
+    // TODO: optimize
+    for y in 0..PIXEL_HEIGHT {
+        for x in 0..PIXEL_WIDTH {
+            set_color(buffer, (x, y), color);
+        }
+    }
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn buffer_ptr() -> *mut u8 {
@@ -90,12 +117,32 @@ pub extern "C" fn init() {
 #[unsafe(no_mangle)]
 pub extern "C" fn update(ticks: u64, frame: u64, host_buffer_offset: u32) -> u32 {
     // 256 ticks per second
-    match ticks % 3072 {
-        0..256 => white(ticks, frame, host_buffer_offset),
-        256..1024 => rainbow_cycle(ticks, frame, host_buffer_offset),
-        1024..2048 => proc0001(ticks, frame, host_buffer_offset),
-        2048.. => anim0001(ticks, frame, host_buffer_offset),
+
+    if ticks < 512 {
+        match ticks % 512 {
+            0..256 => white(ticks, frame, host_buffer_offset),
+            256.. => corners(ticks, frame, host_buffer_offset),
+        }
+    } else {
+        match (ticks - 512) % 3072 {
+            0..1024 => rainbow_cycle(ticks, frame, host_buffer_offset),
+            1024..2048 => proc0001(ticks, frame, host_buffer_offset),
+            2048.. => anim0001(ticks, frame, host_buffer_offset),
+        }
     }
+}
+
+fn corners(_ticks: u64, _frame: u64, host_buffer_offset: u32) -> u32 {
+    // Use the host-provided buffer
+    let ptr = host_buffer_offset as *mut u8;
+
+    clear(ptr, (0, 0, 0));
+    set_color(ptr, (0, 0), (255, 0, 0)); // top-left is red
+    set_color(ptr, (PIXEL_WIDTH - 1, 0), (0, 255, 0)); // top-right is green
+    set_color(ptr, (0, PIXEL_HEIGHT - 1), (0, 0, 255)); // bottom-left is blue
+    set_color(ptr, (PIXEL_WIDTH - 1, PIXEL_HEIGHT - 1), (200, 200, 0)); // bottom-right is yellow
+
+    host_buffer_offset
 }
 
 #[unsafe(no_mangle)]
@@ -118,15 +165,15 @@ pub extern "C" fn rainbow_cycle(ticks: u64, _frame: u64, host_buffer_offset: u32
     // Time-based frame calculation
     let frame = ticks * FPS / TICKS_PER_SECOND;
 
-    for y in 0..PIXEL_ROWS {
-        for x in 0..PIXEL_COLS {
+    for y in 0..PIXEL_HEIGHT {
+        for x in 0..PIXEL_WIDTH {
             // Diagonal rainbow: hue based on x + y + frame
             let hue = ((x + y) as u64 * 8 + frame * 2) % 256;
 
             // Simple HSV to RGB (S=1, V=1)
             let (r, g, b) = hsv_to_rgb(hue as u8);
 
-            let offset = (y * PIXEL_COLS + x) * PIXEL_CHANNELS;
+            let offset = (y * PIXEL_WIDTH + x) * PIXEL_CHANNELS;
             unsafe {
                 ptr.add(offset).write(r);
                 ptr.add(offset + 1).write(g);
@@ -178,11 +225,11 @@ pub extern "C" fn proc0001(ticks: u64, _frame: u64, _host_buffer_offset: u32) ->
     // Time-based frame calculation
     let frame = ticks * FPS / TICKS_PER_SECOND;
 
-    for y in 0..PIXEL_ROWS {
+    for y in 0..PIXEL_HEIGHT {
         if y % 2 == 0 {
             continue;
         }
-        for x in 0..PIXEL_COLS {
+        for x in 0..PIXEL_WIDTH {
             if x % 2 == 0 {
                 continue;
             }
@@ -190,7 +237,7 @@ pub extern "C" fn proc0001(ticks: u64, _frame: u64, _host_buffer_offset: u32) ->
 
             let (r, g, b) = hsv_to_rgb(hue as u8);
 
-            let offset = (y * PIXEL_COLS + x) * PIXEL_CHANNELS;
+            let offset = (y * PIXEL_WIDTH + x) * PIXEL_CHANNELS;
             unsafe {
                 ptr.add(offset).write(r);
                 ptr.add(offset + 1).write(g);

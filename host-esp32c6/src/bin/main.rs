@@ -13,10 +13,11 @@ use esp_hal::clock::CpuClock;
 use esp_hal::main;
 use esp_hal::rmt::Rmt;
 use esp_hal::time::Instant;
-use esp_hal_smartled::{RmtSmartLeds, Ws2812Timing, buffer_size, color_order};
+use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, Ws2812Timing};
 use esp_println::println;
+use host_common::serpentine_index;
 use panic_rtt_target as _;
-use smart_leds::{RGB8, SmartLedsWrite, brightness, gamma};
+use smart_leds::{brightness, gamma, SmartLedsWrite, RGB8};
 use wasmi::{Engine, Linker, Memory, Module, Store, TypedFunc};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -136,13 +137,27 @@ fn main() -> ! {
         },
     };
 
+    // LED panel is a strip of 256 WS2812B LEDs arranged in a 16x16 grid, in a serpentine pattern.
+    //
+    // The first strip LED is at the panel's bottom left corner, then the sequence goes right,
+    // then up a row, then goes left, then up a row, and so on in a serpentine pattern.
+    // Therefore, the top left corner is the last LED at strip position 255.
+    //
+    //   255 254 253 252 251 250 249 248 247 246 245 244 243 242 241 240
+    //   224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239
+    //   223 ...
+    //   ...
+    //    32 ...
+    //    31  30  29  28  27  26  25  24  23  22  21  20  19  18  17  16
+    //     0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
+
     // Initialise LED hardware driver
     let led_pin = peripherals.GPIO10;
     let freq = esp_hal::time::Rate::from_mhz(80);
     type LedColor = RGB8;
     const HEIGHT: usize = 16;
     const WIDTH: usize = 16;
-    const NUM_LEDS: usize = 16 * 16;
+    const NUM_LEDS: usize = WIDTH * HEIGHT;
     let mut led = {
         let rmt = Rmt::new(peripherals.RMT, freq).expect("RMT should initialise");
         RmtSmartLeds::<
@@ -155,7 +170,26 @@ fn main() -> ! {
         .expect("Should init LED driver")
     };
 
-    let mut data: [RGB8; NUM_LEDS] = [Default::default(); NUM_LEDS];
+    // Clear all
+    // let mut data = [RGB8::default(); NUM_LEDS];
+    //
+    // // Set strip index 0 to red
+    // // data[0] = RGB8 { r: 255, g: 0, b: 0 };
+    // // data[1] = RGB8 { r: 0, g: 255, b: 0 };
+    // // data[15] = RGB8 { r: 0, g: 0, b: 255 };
+    // // data[16] = RGB8 {
+    // //     r: 200,
+    // //     g: 200,
+    // //     b: 0,
+    // // };
+    // data[240] = RGB8 { r: 255, g: 0, b: 0 };
+    //
+    // led.write(brightness(gamma(data.iter().cloned()), BRIGHTNESS))
+    //     .expect("Should write to LED");
+    //
+    // loop {}
+
+    let mut data: [RGB8; NUM_LEDS] = [RGB8::default(); NUM_LEDS];
 
     log!("Entering main loop...");
     loop {
@@ -179,7 +213,8 @@ fn main() -> ! {
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
                 let src = y * WIDTH + x;
-                let dst = serpentine_index(x, y, HEIGHT);
+                let dst = serpentine_index(x, y, WIDTH, HEIGHT);
+                //log!("({}, {}), src={}, dst={}", x, y, src, dst);
 
                 let mut color_buf = [0u8; 3];
                 let pixel_id = (src) * 3usize;
@@ -228,15 +263,5 @@ fn main() -> ! {
         //     };
         //     log!("FPS: {}", fps);
         // }
-    }
-}
-
-fn serpentine_index(x: usize, y: usize, width: usize) -> usize {
-    if y.is_multiple_of(2) {
-        // Even rows: left to right
-        y * width + x
-    } else {
-        // Odd rows: right to left
-        y * width + (width - 1 - x)
     }
 }

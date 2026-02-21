@@ -23,3 +23,7 @@ clean:
 ci: build-guest
     just -f guest/justfile ci
     just -f host-esp32c6/justfile ci
+
+# Tests are only for non-embedded crates
+test:
+    cargo test --manifest-path host-common/Cargo.toml

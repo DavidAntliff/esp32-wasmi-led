@@ -4,6 +4,9 @@ name = "host-esp32c6"
 rust-version = "1.88"
 version = "0.1.0"
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "host-esp32c6"
 path = "./src/bin/main.rs"
@@ -30,6 +33,8 @@ portable-atomic-util = { version = "0.2.4", features = ["alloc"] }
 esp-hal-smartled2 = "0.28.1"
 smart-leds-trait = "0.3.2"
 smart-leds = "0.4.0"
+
+host-common = { path = "../host-common" }
 
 [profile.dev]
 # Rust debug is too slow.
