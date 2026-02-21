@@ -8,6 +8,25 @@ build-assets:
     mkdir -p target
     convert assets/static-0001.png -depth 8 rgb:target/static-0001.raw
     convert assets/anim-0001.gif -coalesce -depth 8 rgb:target/anim-0001_%03d.raw
+    convert assets/anim-0002.png -depth 8 rgb:target/anim-0002.raw
+
+gallery: build-assets
+    #!/bin/bash
+    mkdir -p target/tmp
+    for f in target/*.raw; do
+        name=$(basename "$f" .raw)
+        convert -size 16x16 -depth 8 -filter point -resize 800% \
+            "rgb:$f" "target/tmp/${name}.png"
+    done
+
+    montage -label '%t' target/tmp/*.png \
+        -geometry +10+10 \
+        -background white -fill black \
+        -pointsize 16 \
+        target/gallery.png
+
+view-gallery: gallery
+    feh target/gallery.png
 
 opt: build
     # Needs: cargo install wasm-opt
@@ -30,7 +49,6 @@ print: build
 
 clean:
     cargo clean
-    rm -f assets/static-0001.raw
 
 ci: build-assets
     cargo clippy -- -D warnings

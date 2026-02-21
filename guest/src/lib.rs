@@ -116,18 +116,22 @@ pub extern "C" fn init() {
 /// Returns the offset to the pixel buffer to be displayed
 #[unsafe(no_mangle)]
 pub extern "C" fn update(ticks: u64, frame: u64, host_buffer_offset: u32) -> u32 {
-    // 256 ticks per second
+    const BOOT_TICKS: u64 = 512;
 
-    if ticks < 512 {
-        match ticks % 512 {
+    // 256 ticks per second
+    if ticks < BOOT_TICKS {
+        // Initial white + corners test pattern for the first 2 seconds
+        match ticks % BOOT_TICKS {
             0..256 => white(ticks, frame, host_buffer_offset),
             256.. => corners(ticks, frame, host_buffer_offset),
         }
     } else {
-        match (ticks - 512) % 3072 {
+        let ticks = ticks - BOOT_TICKS;
+        match ticks % 4096 {
             0..1024 => rainbow_cycle(ticks, frame, host_buffer_offset),
-            1024..2048 => proc0001(ticks, frame, host_buffer_offset),
-            2048.. => anim0001(ticks, frame, host_buffer_offset),
+            1024..2048 => proc0001(ticks - 1024, frame, host_buffer_offset),
+            2048..3072 => anim0001(ticks - 2048, frame, host_buffer_offset),
+            3072.. => anim0002(ticks - 3072, frame, host_buffer_offset),
         }
     }
 }
@@ -247,4 +251,30 @@ pub extern "C" fn proc0001(ticks: u64, _frame: u64, _host_buffer_offset: u32) ->
     }
 
     ptr as u32
+}
+
+mod anim0002 {
+    // A vertical sprite-sheet animation with 6 frames, each 16x16 pixels (768 bytes)
+    pub(crate) static IMAGE_DATA: &[u8] = include_bytes!("../target/anim-0002.raw");
+    include!(concat!(env!("OUT_DIR"), "/anim0002.rs"));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn anim0002(ticks: u64, _frame: u64, _host_buffer_offset: u32) -> u32 {
+    const TOTAL_TICKS: u64 = anim0002::FRAME_OFFSETS.last().unwrap().1;
+    let ticks = ticks % TOTAL_TICKS;
+
+    // Find the current frame based on the current cyclic tick count
+    for (i, &(_, frame_end)) in anim0002::FRAME_OFFSETS.iter().enumerate() {
+        if ticks < frame_end {
+            let frame_start = anim0002::FRAME_OFFSETS[i].0;
+            let frame_end = frame_start + PIXEL_BUFFER_SIZE;
+            return anim0002::IMAGE_DATA[frame_start..frame_end].as_ptr() as u32;
+        }
+    }
+
+    // If error, default to white frame
+    white(ticks, _frame, _host_buffer_offset)
+
+    // TODO: loops - need to switch to a state machine
 }
