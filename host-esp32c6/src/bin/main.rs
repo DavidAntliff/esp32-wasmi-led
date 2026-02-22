@@ -10,15 +10,17 @@ extern crate alloc;
 
 use alloc::collections::VecDeque;
 use esp_hal::clock::CpuClock;
-use esp_hal::main;
 use esp_hal::rmt::Rmt;
 use esp_hal::time::Instant;
+use esp_hal::timer::timg::TimerGroup;
 use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, Ws2812Timing};
 use esp_println::println;
 use host_common::serpentine_index;
-use panic_rtt_target as _;
 use smart_leds::{brightness, gamma, SmartLedsWrite, RGB8};
 use wasmi::{Engine, Linker, Memory, Module, Store, TypedFunc};
+
+#[allow(unused_imports)]
+use esp_backtrace as _;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -56,8 +58,8 @@ pub struct GuestState {
     update: TypedFunc<(u64, u64, u32), u32>,
 }
 
-#[main]
-fn main() -> ! {
+#[esp_rtos::main]
+async fn main(spawner: embassy_executor::Spawner) -> ! {
     rtt_target::rtt_init_defmt!();
 
     log!("🦀 WASM LED Matrix Host");
@@ -67,6 +69,12 @@ fn main() -> ! {
 
     //esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 65536);
     esp_alloc::heap_allocator!(size: 262144);
+
+    // Initialise Embassy
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    let sw_interrupt =
+        esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
 
     // TODO: refactor
 
@@ -263,5 +271,8 @@ fn main() -> ! {
         //     };
         //     log!("FPS: {}", fps);
         // }
+
+        // Yield to let other tasks run
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(1)).await;
     }
 }
