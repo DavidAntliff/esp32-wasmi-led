@@ -9,18 +9,26 @@
 extern crate alloc;
 
 use alloc::collections::VecDeque;
+use embassy_net::{Runner, StackResources};
+use embassy_time::{Duration, Timer};
+#[allow(unused_imports)]
+use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::rmt::Rmt;
+use esp_hal::rng::Rng;
 use esp_hal::time::Instant;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, Ws2812Timing};
 use esp_println::println;
+use esp_radio::{
+    wifi::{
+        ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
+    },
+    Controller,
+};
 use host_common::serpentine_index;
 use smart_leds::{brightness, gamma, SmartLedsWrite, RGB8};
 use wasmi::{Engine, Linker, Memory, Module, Store, TypedFunc};
-
-#[allow(unused_imports)]
-use esp_backtrace as _;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -58,6 +66,19 @@ pub struct GuestState {
     update: TypedFunc<(u64, u64, u32), u32>,
 }
 
+// When you are okay with using a nightly compiler it's better to use https://docs.rs/static_cell/2.1.0/static_cell/macro.make_static.html
+macro_rules! mk_static {
+    ($t:ty,$val:expr) => {{
+        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
+        #[deny(unused_attributes)]
+        let x = STATIC_CELL.uninit().write(($val));
+        x
+    }};
+}
+
+const SSID: &str = env!("WIFI_SSID");
+const PASSWORD: &str = env!("WIFI_PASSWORD");
+
 #[esp_rtos::main]
 async fn main(spawner: embassy_executor::Spawner) -> ! {
     rtt_target::rtt_init_defmt!();
@@ -67,7 +88,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    //esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 65536);
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 65536);
     esp_alloc::heap_allocator!(size: 262144);
 
     // Initialise Embassy
@@ -76,21 +97,71 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_interrupt.software_interrupt0);
 
-    // TODO: refactor
+    log!("🛜 Initialising WiFi...");
+    let esp_radio_ctrl = &*mk_static!(Controller<'static>, esp_radio::init().unwrap());
+
+    let (controller, interfaces) =
+        esp_radio::wifi::new(&esp_radio_ctrl, peripherals.WIFI, Default::default()).unwrap();
+
+    let wifi_interface = interfaces.sta;
+
+    // DHCP
+    //let config = embassy_net::Config::dhcpv4(Default::default());
+
+    // Static IP
+    let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+        address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(192, 168, 1, 242), 24),
+        gateway: Some(embassy_net::Ipv4Address::new(192, 168, 1, 1)),
+        dns_servers: heapless::Vec::from_slice(&[embassy_net::Ipv4Address::new(192, 168, 1, 1)])
+            .unwrap(),
+    });
+
+    let rng = Rng::new();
+    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+
+    // Init network stack
+    let (stack, runner) = embassy_net::new(
+        wifi_interface,
+        config,
+        mk_static!(StackResources<3>, StackResources::<3>::new()),
+        seed,
+    );
+
+    spawner.spawn(connection(controller)).ok();
+    spawner.spawn(net_task(runner)).ok();
+
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+
+    loop {
+        if stack.is_link_up() {
+            break;
+        }
+        Timer::after(Duration::from_millis(500)).await;
+    }
+
+    log!("Waiting to get IP address...");
+    loop {
+        if let Some(config) = stack.config_v4() {
+            log!("Got IP: {}", defmt::Display2Format(&config.address));
+            break;
+        }
+        Timer::after(Duration::from_millis(500)).await;
+    }
 
     // FIXME: import guest source into same project
     let wasm_bytes =
         include_bytes!("../../../guest/target/wasm32-unknown-unknown/release/guest.wasm");
-    log!("Initialising engine...");
+    log!("⚙️ Initialising WASMI engine...");
     let engine = Engine::default();
-    log!("Initialising module...");
+    log!("⚙️ Initialising WASMI module...");
     let module = Module::new(&engine, wasm_bytes).expect("Failed to create module");
-    log!("Initialising store...");
+    log!("⚙️ Initialising WASMI store...");
     let mut store = Store::new(&engine, ());
-    log!("Initialising linker...");
+    log!("⚙️ Initialising WASMI linker...");
     let linker = Linker::<()>::new(&engine);
 
-    log!("Instantiating instance...");
+    log!("⚙️ Instantiating WASMI instance...");
     let instance = linker
         .instantiate_and_start(&mut store, &module)
         .expect("Failed to instantiate module");
@@ -114,20 +185,20 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         "Not enough memory for host pixel buffer"
     );
 
-    log!("Fetching 'update' function...");
+    //log!("Fetching 'update' function...");
     let update_func = instance
         .get_typed_func::<(u64, u64, u32), u32>(&mut store, "update")
         .expect("Failed to get 'update' function");
 
-    log!("Fetching 'init' function...");
+    //log!("Fetching 'init' function...");
     let init_func = instance
         .get_typed_func::<(), ()>(&mut store, "init")
         .expect("Failed to get 'init' function");
 
-    log!("Calling 'init' function...");
+    log!("🧳 Calling guest 'init' function...");
     init_func
         .call(&mut store, ())
-        .expect("Failed to call 'init' function");
+        .expect("Failed to call guest 'init' function");
 
     let mut app_state = AppState {
         start_time: Instant::now(),
@@ -174,7 +245,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
             LedColor,
             color_order::Grb,
             Ws2812Timing,
-        >::new_with_memsize(rmt.channel0, led_pin, 2)
+        >::new_with_memsize(rmt.channel0, led_pin, 4) // memsize 2 is glitchy
         .expect("Should init LED driver")
     };
 
@@ -199,7 +270,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     let mut data: [RGB8; NUM_LEDS] = [RGB8::default(); NUM_LEDS];
 
-    log!("Entering main loop...");
+    log!("🔁 Entering main loop...");
     loop {
         // 256 ticks per second (millisecond)
         let elapsed = Instant::now() - app_state.start_time;
@@ -242,8 +313,11 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
             }
         }
 
-        led.write(brightness(gamma(data.iter().cloned()), BRIGHTNESS))
-            .expect("Should write to LED");
+        // Disable interrupts to avoid glitches
+        critical_section::with(|_| {
+            led.write(brightness(gamma(data.iter().cloned()), BRIGHTNESS))
+                .expect("Should write to LED");
+        });
 
         app_state.counter += 1;
 
@@ -273,6 +347,57 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         // }
 
         // Yield to let other tasks run
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(1)).await;
+        Timer::after(Duration::from_millis(1)).await;
     }
+}
+
+#[embassy_executor::task]
+async fn connection(mut controller: WifiController<'static>) {
+    log!("start connection task");
+    log!(
+        "Device capabilities: {:?}",
+        defmt::Debug2Format(&controller.capabilities())
+    );
+    loop {
+        if esp_radio::wifi::sta_state() == WifiStaState::Connected {
+            // wait until we're no longer connected
+            controller.wait_for_event(WifiEvent::StaDisconnected).await;
+            Timer::after(Duration::from_millis(5000)).await
+        }
+        if !matches!(controller.is_started(), Ok(true)) {
+            let client_config = ModeConfig::Client(
+                ClientConfig::default()
+                    .with_ssid(SSID.into())
+                    .with_password(PASSWORD.into()),
+            );
+            controller.set_config(&client_config).unwrap();
+            log!("Starting wifi");
+            controller.start_async().await.unwrap();
+            log!("Wifi started!");
+
+            log!("Scan");
+            let scan_config = ScanConfig::default().with_max(10);
+            let result = controller
+                .scan_with_config_async(scan_config)
+                .await
+                .unwrap();
+            for ap in result {
+                log!("{:?}", defmt::Debug2Format(&ap));
+            }
+        }
+        log!("About to connect...");
+
+        match controller.connect_async().await {
+            Ok(_) => log!("Wifi connected!"),
+            Err(e) => {
+                log!("Failed to connect to wifi: {:?}", defmt::Debug2Format(&e));
+                Timer::after(Duration::from_millis(5000)).await
+            }
+        }
+    }
+}
+
+#[embassy_executor::task]
+async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
+    runner.run().await
 }

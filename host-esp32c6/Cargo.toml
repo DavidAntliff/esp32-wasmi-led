@@ -12,11 +12,11 @@ name = "host-esp32c6"
 path = "./src/bin/main.rs"
 
 [dependencies]
-esp-hal = { version = "1.0.0", features = ["defmt", "esp32c6", "unstable"] }
+esp-hal = { version = "1.0.0", features = ["esp32c6", "defmt", "unstable"] }
 
 defmt = "1.0.1"
 esp-backtrace = { version = "0.18.1", features = ["esp32c6", "panic-handler", "defmt"] }
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32c6"] }
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32c6", "defmt"] }
 
 esp-alloc = { version = "0.9.0", features = ["defmt"] }
 #panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
@@ -24,12 +24,9 @@ rtt-target = { version = "0.6.2", features = ["defmt"] }
 
 esp-println = { version = "0.16.1", features = ["esp32c6"] }
 wasmi = { version = "1.0.4", default-features = false, features = ["prefer-btree-collections"] }
-#spin = "0.10.0"
-#portable-atomic-util = { version = "0.2.4", features = ["alloc"] }
 
-#blinksy = "0.11.0"
-#blinksy-esp = "0.11.0"
-#heapless = "0.9.1"  # same as blinksy
+heapless = "0.8.0"
+critical-section = "1.2.0"
 
 esp-hal-smartled2 = "0.28.1"
 #smart-leds-trait = "0.3.2"
@@ -38,9 +35,14 @@ smart-leds = "0.4.0"
 host-common = { path = "../host-common" }
 
 # Let's try Embassy...
-esp-rtos = { version = "0.2.0", features = ["embassy", "esp32c6"] }
-embassy-executor = "0.9.1"
+esp-rtos = { version = "0.2.0", features = ["esp32c6", "embassy", "esp-alloc", "esp-radio"] }
+embassy-executor = "0.9.0"
 embassy-time = { version = "0.5.0" }
+embassy-net = { version = "0.8.0", features = [
+    "dhcpv4",
+] }
+esp-radio = { version = "0.17.0", features = ["esp32c6", "unstable", "wifi", "esp-alloc"] }
+static_cell = "2.1.0"
 
 [profile.dev]
 # Rust debug is too slow.
