@@ -27,3 +27,6 @@ ci: build-guest
 # Tests are only for non-embedded crates
 test:
     cargo test --manifest-path host-common/Cargo.toml
+
+mosquitto:
+    docker run -it -p 1883:1883 -v "$PWD/mosquitto/config:/mosquitto/config" -v /mosquitto/data -v /mosquitto/log eclipse-mosquitto

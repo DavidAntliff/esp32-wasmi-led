@@ -130,8 +130,8 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
 
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
+    // let mut rx_buffer = [0; 4096];
+    // let mut tx_buffer = [0; 4096];
 
     loop {
         if stack.is_link_up() {
@@ -148,6 +148,9 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         }
         Timer::after(Duration::from_millis(500)).await;
     }
+
+    log!("Starting MQTT...");
+    spawner.spawn(host_esp32c6::mqtt::mqtt_task(stack)).ok();
 
     // FIXME: import guest source into same project
     let wasm_bytes =
