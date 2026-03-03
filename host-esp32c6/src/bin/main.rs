@@ -112,8 +112,14 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
         address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(192, 168, 1, 242), 24),
         gateway: Some(embassy_net::Ipv4Address::new(192, 168, 1, 1)),
-        dns_servers: heapless::Vec::from_slice(&[embassy_net::Ipv4Address::new(192, 168, 1, 1)])
-            .unwrap(),
+        dns_servers: {
+            let mut dns = heapless::Vec::<embassy_net::Ipv4Address, 3>::new();
+            dns.push(embassy_net::Ipv4Address::new(192, 168, 1, 1))
+                .unwrap();
+            dns
+        },
+        // dns_servers: heapless::Vec::from_slice(&[embassy_net::Ipv4Address::new(192, 168, 1, 1)])
+        //     .unwrap(),
     });
 
     let rng = Rng::new();
@@ -365,6 +371,7 @@ async fn connection(mut controller: WifiController<'static>) {
         if esp_radio::wifi::sta_state() == WifiStaState::Connected {
             // wait until we're no longer connected
             controller.wait_for_event(WifiEvent::StaDisconnected).await;
+            log!("WiFi disconnected");
             Timer::after(Duration::from_millis(5000)).await
         }
         if !matches!(controller.is_started(), Ok(true)) {

@@ -1,7 +1,11 @@
+// This seems to fix RustRover's External Linter issue:
+//   https://youtrack.jetbrains.com/issue/RUST-19797/False-external-linter-clippy-warnings-in-nostd-esp32-project
+//#![cfg(not(test))]
+
 use core::fmt::Write;
 use embassy_futures::select::{select, Either};
 use embassy_net::{tcp::TcpSocket, Ipv4Address, Stack};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Ticker, Timer};
 use rust_mqtt::client::event::{Event, Suback};
 use rust_mqtt::client::options::{PublicationOptions, RetainHandling, SubscriptionOptions};
 use rust_mqtt::types::{QoS, TopicName};
@@ -49,7 +53,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
     let options = ConnectOptions {
         clean_start: true,
         session_expiry_interval: SessionExpiryInterval::Seconds(60),
-        keep_alive: KeepAlive::Seconds(5),
+        keep_alive: KeepAlive::Seconds(30 /*5*/),
         user_name: Some(MqttString::try_from("testUser").unwrap()),
         password: Some(MqttBinary::try_from("testPass").unwrap()),
         will: Some(WillOptions {
@@ -154,6 +158,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
     };
 
     let mut counter = 0;
+    let mut ticker = Ticker::every(Duration::from_secs(5));
 
     // Main loop: publish periodically + receive incoming messages
     loop {
@@ -161,7 +166,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         // previous poll_body data by this point in the loop.
         unsafe { client.buffer().reset() };
 
-        match select(Timer::after(Duration::from_secs(5)), client.poll_header()).await {
+        match select(ticker.next(), client.poll_header()).await {
             // Timer fired — publish an update
             Either::First(_) => {
                 counter += 1;
@@ -192,19 +197,42 @@ pub async fn mqtt_task(stack: Stack<'static>) {
                 defmt::info!("Received header {:?}", h.packet_type());
                 match client.poll_body(h).await {
                     Ok(Event::Publish(msg)) => {
-                        defmt::info!(
-                            "Received publish on topic, payload len={}",
-                            msg.message.len()
-                        );
+                        // defmt::info!(
+                        //     "Received publish on topic, payload len={}",
+                        //     msg.message.len()
+                        // );
+                        //
+                        // // Process the message here
+                        // if let Ok(payload_str) = core::str::from_utf8(&msg.message) {
+                        //     defmt::info!("Message payload: \"{}\"", payload_str);
+                        // } else {
+                        //     defmt::info!(
+                        //         "Message payload: {:?}",
+                        //         defmt::Debug2Format(&msg.message)
+                        //     );
+                        // }
+                        defmt::info!("Received publish, payload len={}", msg.message.len());
 
-                        // Process the message here
-                        if let Ok(payload_str) = core::str::from_utf8(&msg.message) {
-                            defmt::info!("Message payload: \"{}\"", payload_str);
-                        } else {
-                            defmt::info!(
-                                "Message payload: {:?}",
-                                defmt::Debug2Format(&msg.message)
-                            );
+                        match serde_json_core::from_slice::<DeviceCommand>(&msg.message) {
+                            Ok((command, _bytes_consumed)) => {
+                                defmt::info!("Parsed command: {:?}", command);
+                                handle_command(command).await;
+                            }
+                            Err(e) => {
+                                // Log what we received for debugging
+                                if let Ok(s) = core::str::from_utf8(&msg.message) {
+                                    defmt::warn!(
+                                        "Failed to parse: \"{}\" err={:?}",
+                                        s,
+                                        defmt::Debug2Format(&e)
+                                    );
+                                } else {
+                                    defmt::warn!(
+                                        "Failed to parse non-UTF8 payload, err={:?}",
+                                        defmt::Debug2Format(&e)
+                                    );
+                                }
+                            }
                         }
                     }
                     Ok(e) => defmt::info!("Event: {:?}", e),
@@ -214,6 +242,55 @@ pub async fn mqtt_task(stack: Stack<'static>) {
                     }
                 }
             }
+        }
+    }
+}
+
+// Experimental message handling
+use serde::Deserialize;
+
+#[derive(Deserialize, defmt::Format)]
+pub enum DeviceCommand {
+    SetColor {
+        r: u8,
+        g: u8,
+        b: u8,
+    },
+    SetBrightness {
+        level: u8,
+    },
+    DisplayPattern {
+        pattern_id: u16,
+        speed_ms: u32,
+    },
+    SetWifi {
+        ssid: heapless::String<32>,
+        password: heapless::String<64>,
+    },
+    Reboot,
+}
+
+async fn handle_command(cmd: DeviceCommand) {
+    match cmd {
+        DeviceCommand::SetColor { r, g, b } => {
+            defmt::info!("Setting color: ({}, {}, {})", r, g, b);
+            // drive your WS2812 strip, etc.
+        }
+        DeviceCommand::SetBrightness { level } => {
+            defmt::info!("Setting brightness: {}", level);
+        }
+        DeviceCommand::DisplayPattern {
+            pattern_id,
+            speed_ms,
+        } => {
+            defmt::info!("Pattern {} at {}ms", pattern_id, speed_ms);
+        }
+        DeviceCommand::SetWifi { ssid, password } => {
+            defmt::info!("WiFi config received for SSID: {}", ssid.as_str());
+        }
+        DeviceCommand::Reboot => {
+            defmt::info!("Reboot requested");
+            //esp_hal::reset::software_reset();
         }
     }
 }

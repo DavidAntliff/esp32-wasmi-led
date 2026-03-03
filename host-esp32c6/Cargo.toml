@@ -6,10 +6,17 @@ version = "0.1.0"
 
 [lib]
 path = "src/lib.rs"
+test = false
+bench = false
 
 [[bin]]
 name = "host-esp32c6"
 path = "./src/bin/main.rs"
+test = false
+bench = false
+# Fix "Can't find crate for 'test'." warning in RustRover
+# https://youtrack.jetbrains.com/issue/RUST-16875
+#harness = false
 
 [dependencies]
 esp-hal = { version = "1.0.0", features = ["esp32c6", "defmt", "unstable"] }
@@ -25,7 +32,8 @@ rtt-target = { version = "0.6.2", features = ["defmt"] }
 esp-println = { version = "0.16.1", features = ["esp32c6"] }
 wasmi = { version = "1.0.4", default-features = false, features = ["prefer-btree-collections"] }
 
-heapless = "0.8.0"
+#heapless = { version = "0.9.2", features = ["serde", "defmt"] }  # not compatible with embassy-net?
+heapless = { version = "0.8.0", features = ["serde", "defmt-03"] }
 critical-section = "1.2.0"
 
 esp-hal-smartled2 = "0.28.1"
@@ -48,6 +56,11 @@ static_cell = "2.1.0"
 # MQTT...
 rust-mqtt = { version = "0.4.1", default-features = false, features = ["defmt", "v5", "bump"] }
 embassy-futures = "0.1.2"
+
+# Messaging...
+serde = { version = "1.0.228", default-features = false, features = ["derive"] }
+serde-json-core = "0.6"
+
 
 [profile.dev]
 # Rust debug is too slow.
