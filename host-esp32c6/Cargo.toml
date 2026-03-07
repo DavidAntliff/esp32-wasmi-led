@@ -50,6 +50,7 @@ embassy-net = { version = "0.8.0", features = [
     "dhcpv4",
     "tcp",
 ] }
+embassy-sync = { version = "0.7.2" }
 esp-radio = { version = "0.17.0", features = ["esp32c6", "unstable", "wifi", "esp-alloc"] }
 static_cell = "2.1.0"
 

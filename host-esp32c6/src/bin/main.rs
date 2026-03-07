@@ -8,8 +8,10 @@
 
 extern crate alloc;
 
-use alloc::collections::VecDeque;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use embassy_net::{Runner, StackResources};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 #[allow(unused_imports)]
 use esp_backtrace as _;
@@ -19,7 +21,6 @@ use esp_hal::rng::Rng;
 use esp_hal::time::Instant;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, Ws2812Timing};
-use esp_println::println;
 use esp_radio::{
     wifi::{
         ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
@@ -27,6 +28,7 @@ use esp_radio::{
     Controller,
 };
 use host_common::serpentine_index;
+use host_esp32c6::log;
 use smart_leds::{brightness, gamma, SmartLedsWrite, RGB8};
 use wasmi::{Engine, Linker, Memory, Module, Store, TypedFunc};
 
@@ -34,24 +36,28 @@ use wasmi::{Engine, Linker, Memory, Module, Store, TypedFunc};
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
 
-const FPS_WINDOW_SIZE: usize = 60;
 const TICKS_PER_SECOND: u64 = 256;
 const BRIGHTNESS: u8 = 100;
 
-// A macro that calls defmt::info!() as well as println!()
-macro_rules! log {
-    ($($arg:tt)*) => {{
-        defmt::info!($($arg)*);
-        println!($($arg)*);
-    }};
-}
+// Pixel buffer dimensions
+const HEIGHT: usize = 16;
+const WIDTH: usize = 16;
+const NUM_LEDS: usize = WIDTH * HEIGHT;
+
+// wasmi_task signals this when a frame is ready in the pixel buffer
+static FRAME_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+// led_task signals this when it's done reading the pixel buffer
+static FRAME_CONSUMED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+// Pointer to the current frame's pixel buffer (set by wasmi_task before signalling FRAME_READY)
+static FRAME_PTR: AtomicUsize = AtomicUsize::new(0);
+// Length of the pixel data in bytes
+static FRAME_LEN: AtomicUsize = AtomicUsize::new(0);
 
 pub struct AppState {
     start_time: Instant,
     ticks: u64,
     counter: u64,
-    frame_times: VecDeque<Instant>,
-    guest_state: GuestState,
 }
 
 pub struct GuestState {
@@ -136,9 +142,6 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
 
-    // let mut rx_buffer = [0; 4096];
-    // let mut tx_buffer = [0; 4096];
-
     loop {
         if stack.is_link_up() {
             break;
@@ -146,223 +149,31 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         Timer::after(Duration::from_millis(500)).await;
     }
 
-    log!("Waiting to get IP address...");
+    log!("🌐 Waiting to get IP address...");
     loop {
         if let Some(config) = stack.config_v4() {
-            log!("Got IP: {}", defmt::Display2Format(&config.address));
+            log!("🌐 Got IP: {}", defmt::Display2Format(&config.address));
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
     }
 
-    log!("Starting MQTT...");
     spawner.spawn(host_esp32c6::mqtt::mqtt_task(stack)).ok();
 
-    // FIXME: import guest source into same project
-    let wasm_bytes =
-        include_bytes!("../../../guest/target/wasm32-unknown-unknown/release/guest.wasm");
-    log!("⚙️ Initialising WASMI engine...");
-    let engine = Engine::default();
-    log!("⚙️ Initialising WASMI module...");
-    let module = Module::new(&engine, wasm_bytes).expect("Failed to create module");
-    log!("⚙️ Initialising WASMI store...");
-    let mut store = Store::new(&engine, ());
-    log!("⚙️ Initialising WASMI linker...");
-    let linker = Linker::<()>::new(&engine);
+    spawner.spawn(wasmi_task()).ok();
 
-    log!("⚙️ Instantiating WASMI instance...");
-    let instance = linker
-        .instantiate_and_start(&mut store, &module)
-        .expect("Failed to instantiate module");
+    spawner
+        .spawn(led_task(peripherals.GPIO10.into(), peripherals.RMT))
+        .ok();
 
-    let memory = instance
-        .get_memory(&store, "memory")
-        .expect("Failed to get guest memory");
-
-    let host_buffer_offset = memory.data(&store).len() as u32;
-    println!("Host pixel buffer at offset 0x{host_buffer_offset:04x}");
-
-    // Grow guest memory by 1 page (64KiB) to give some space for the host buffer
-    memory.grow(&mut store, 1).expect("Failed to grow memory");
-    log!(
-        "Guest memory size: 0x{:04x} bytes",
-        memory.data(&store).len()
-    );
-
-    assert!(
-        host_buffer_offset as usize + 768 <= (memory.data_size(&store)),
-        "Not enough memory for host pixel buffer"
-    );
-
-    //log!("Fetching 'update' function...");
-    let update_func = instance
-        .get_typed_func::<(u64, u64, u32), u32>(&mut store, "update")
-        .expect("Failed to get 'update' function");
-
-    //log!("Fetching 'init' function...");
-    let init_func = instance
-        .get_typed_func::<(), ()>(&mut store, "init")
-        .expect("Failed to get 'init' function");
-
-    log!("🧳 Calling guest 'init' function...");
-    init_func
-        .call(&mut store, ())
-        .expect("Failed to call guest 'init' function");
-
-    let mut app_state = AppState {
-        start_time: Instant::now(),
-        counter: 0,
-        ticks: 0,
-        frame_times: VecDeque::with_capacity(FPS_WINDOW_SIZE),
-        guest_state: GuestState {
-            _engine: engine,
-            store,
-            _linker: linker,
-            memory,
-            host_buffer_offset,
-            _init: init_func,
-            update: update_func,
-        },
-    };
-
-    // LED panel is a strip of 256 WS2812B LEDs arranged in a 16x16 grid, in a serpentine pattern.
-    //
-    // The first strip LED is at the panel's bottom left corner, then the sequence goes right,
-    // then up a row, then goes left, then up a row, and so on in a serpentine pattern.
-    // Therefore, the top left corner is the last LED at strip position 255.
-    //
-    //   255 254 253 252 251 250 249 248 247 246 245 244 243 242 241 240
-    //   224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239
-    //   223 ...
-    //   ...
-    //    32 ...
-    //    31  30  29  28  27  26  25  24  23  22  21  20  19  18  17  16
-    //     0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
-
-    // Initialise LED hardware driver
-    let led_pin = peripherals.GPIO10;
-    let freq = esp_hal::time::Rate::from_mhz(80);
-    type LedColor = RGB8;
-    const HEIGHT: usize = 16;
-    const WIDTH: usize = 16;
-    const NUM_LEDS: usize = WIDTH * HEIGHT;
-    let mut led = {
-        let rmt = Rmt::new(peripherals.RMT, freq).expect("RMT should initialise");
-        RmtSmartLeds::<
-            { buffer_size::<LedColor>(NUM_LEDS) },
-            _,
-            LedColor,
-            color_order::Grb,
-            Ws2812Timing,
-        >::new_with_memsize(rmt.channel0, led_pin, 4) // memsize 2 is glitchy
-        .expect("Should init LED driver")
-    };
-
-    // Clear all
-    // let mut data = [RGB8::default(); NUM_LEDS];
-    //
-    // // Set strip index 0 to red
-    // // data[0] = RGB8 { r: 255, g: 0, b: 0 };
-    // // data[1] = RGB8 { r: 0, g: 255, b: 0 };
-    // // data[15] = RGB8 { r: 0, g: 0, b: 255 };
-    // // data[16] = RGB8 {
-    // //     r: 200,
-    // //     g: 200,
-    // //     b: 0,
-    // // };
-    // data[240] = RGB8 { r: 255, g: 0, b: 0 };
-    //
-    // led.write(brightness(gamma(data.iter().cloned()), BRIGHTNESS))
-    //     .expect("Should write to LED");
-    //
-    // loop {}
-
-    let mut data: [RGB8; NUM_LEDS] = [RGB8::default(); NUM_LEDS];
-
-    log!("🔁 Entering main loop...");
     loop {
-        // 256 ticks per second (millisecond)
-        let elapsed = Instant::now() - app_state.start_time;
-        app_state.ticks = elapsed.as_millis() * TICKS_PER_SECOND / 1000;
-
-        let pixel_buffer = app_state
-            .guest_state
-            .update
-            .call(
-                &mut app_state.guest_state.store,
-                (
-                    app_state.ticks,
-                    app_state.counter,
-                    app_state.guest_state.host_buffer_offset,
-                ),
-            )
-            .expect("Failed to call 'update' function");
-
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                let src = y * WIDTH + x;
-                let dst = serpentine_index(x, y, WIDTH, HEIGHT);
-                //log!("({}, {}), src={}, dst={}", x, y, src, dst);
-
-                let mut color_buf = [0u8; 3];
-                let pixel_id = (src) * 3usize;
-                let offset = pixel_buffer as usize + pixel_id;
-
-                app_state
-                    .guest_state
-                    .memory
-                    .read(&app_state.guest_state.store, offset, &mut color_buf)
-                    .expect("Should read pixel buffer memory");
-
-                data[dst] = RGB8 {
-                    r: color_buf[0],
-                    g: color_buf[1],
-                    b: color_buf[2],
-                };
-            }
-        }
-
-        // Disable interrupts to avoid glitches
-        critical_section::with(|_| {
-            led.write(brightness(gamma(data.iter().cloned()), BRIGHTNESS))
-                .expect("Should write to LED");
-        });
-
-        app_state.counter += 1;
-
-        app_state.frame_times.push_back(Instant::now());
-        if app_state.frame_times.len() > FPS_WINDOW_SIZE {
-            app_state.frame_times.pop_front();
-        }
-
-        // if app_state.counter % 100 == 0 {
-        //     let fps = if app_state.frame_times.len() >= 2 {
-        //         let oldest = app_state.frame_times.front().expect("Should be Some");
-        //         let newest = app_state.frame_times.back().expect("Should be Some");
-        //         let duration = (*newest - *oldest).as_millis() as f64 / 1000.0;
-        //         log!("Duration {}", duration);
-        //         log!("Frames {}", app_state.frame_times.len() - 1);
-        //         if duration > 0.0 {
-        //             (app_state.frame_times.len() - 1) as f64 / duration
-        //         } else {
-        //             log!("zero duration");
-        //             0.0
-        //         }
-        //     } else {
-        //         log!("not enough");
-        //         0.0
-        //     };
-        //     log!("FPS: {}", fps);
-        // }
-
-        // Yield to let other tasks run
-        Timer::after(Duration::from_millis(1)).await;
+        Timer::after(Duration::from_millis(1_000)).await;
     }
 }
 
 #[embassy_executor::task]
 async fn connection(mut controller: WifiController<'static>) {
-    log!("start connection task");
+    log!("🌱 Start connection task...");
     log!(
         "Device capabilities: {:?}",
         defmt::Debug2Format(&controller.capabilities())
@@ -371,7 +182,7 @@ async fn connection(mut controller: WifiController<'static>) {
         if esp_radio::wifi::sta_state() == WifiStaState::Connected {
             // wait until we're no longer connected
             controller.wait_for_event(WifiEvent::StaDisconnected).await;
-            log!("WiFi disconnected");
+            log!("💀 WiFi disconnected");
             Timer::after(Duration::from_millis(5000)).await
         }
         if !matches!(controller.is_started(), Ok(true)) {
@@ -395,12 +206,15 @@ async fn connection(mut controller: WifiController<'static>) {
                 log!("{:?}", defmt::Debug2Format(&ap));
             }
         }
-        log!("About to connect...");
+        log!("🌐 About to connect...");
 
         match controller.connect_async().await {
-            Ok(_) => log!("Wifi connected!"),
+            Ok(_) => log!("💀 Wifi connected!"),
             Err(e) => {
-                log!("Failed to connect to wifi: {:?}", defmt::Debug2Format(&e));
+                log!(
+                    "💀 Failed to connect to wifi: {:?}",
+                    defmt::Debug2Format(&e)
+                );
                 Timer::after(Duration::from_millis(5000)).await
             }
         }
@@ -410,4 +224,197 @@ async fn connection(mut controller: WifiController<'static>) {
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
     runner.run().await
+}
+
+#[embassy_executor::task]
+async fn wasmi_task() {
+    log!("🌱 Start WASMI task...");
+
+    let wasm_bytes =
+        include_bytes!("../../../guest/target/wasm32-unknown-unknown/release/guest.wasm");
+    log!("⚙️ Initialising WASMI engine...");
+    let engine = Engine::default();
+    log!("⚙️ Initialising WASMI module...");
+    let module = Module::new(&engine, wasm_bytes).expect("Failed to create module");
+    log!("⚙️ Initialising WASMI store...");
+    let mut store = Store::new(&engine, ());
+    log!("⚙️ Initialising WASMI linker...");
+    let linker = Linker::<()>::new(&engine);
+
+    log!("⚙️ Instantiating WASMI instance...");
+    let instance = linker
+        .instantiate_and_start(&mut store, &module)
+        .expect("Failed to instantiate module");
+
+    let memory = instance
+        .get_memory(&store, "memory")
+        .expect("Failed to get guest memory");
+
+    let host_buffer_offset = memory.data(&store).len() as u32;
+
+    // Grow guest memory by 1 page (64KiB) to give some space for the host buffer
+    memory.grow(&mut store, 1).expect("Failed to grow memory");
+    log!(
+        "⚙️ Guest memory size: 0x{:04x} bytes @ offset 0x{:04x}",
+        memory.data(&store).len(),
+        host_buffer_offset
+    );
+
+    assert!(
+        host_buffer_offset as usize + NUM_LEDS * 3 <= (memory.data_size(&store)),
+        "Not enough memory for host pixel buffer"
+    );
+
+    let update_func = instance
+        .get_typed_func::<(u64, u64, u32), u32>(&mut store, "update")
+        .expect("Failed to get 'update' function");
+
+    let init_func = instance
+        .get_typed_func::<(), ()>(&mut store, "init")
+        .expect("Failed to get 'init' function");
+
+    log!("🧳 Calling guest 'init' function...");
+    init_func
+        .call(&mut store, ())
+        .expect("Failed to call guest 'init' function");
+
+    let mut guest_state = GuestState {
+        _engine: engine,
+        store,
+        _linker: linker,
+        memory,
+        host_buffer_offset,
+        _init: init_func,
+        update: update_func,
+    };
+
+    let mut app_state = AppState {
+        start_time: Instant::now(),
+        ticks: 0,
+        counter: 0,
+    };
+
+    log!("🔁 WASMI entering main loop...");
+    loop {
+        let elapsed = Instant::now() - app_state.start_time;
+        app_state.ticks = elapsed.as_millis() * TICKS_PER_SECOND / 1000;
+
+        let pixel_buffer = guest_state
+            .update
+            .call(
+                &mut guest_state.store,
+                (
+                    app_state.ticks,
+                    app_state.counter,
+                    guest_state.host_buffer_offset,
+                ),
+            )
+            .expect("Failed to call 'update' function");
+
+        // Get a raw pointer to the pixel data inside WASM linear memory
+        let mem_data = guest_state.memory.data(&guest_state.store);
+        let offset = pixel_buffer as usize;
+        let len = NUM_LEDS * 3;
+        assert!(offset + len <= mem_data.len(), "pixel buffer out of bounds");
+
+        let ptr = mem_data[offset..].as_ptr() as usize;
+
+        // Publish the pointer — safe because led_task won't read until signalled,
+        // and we block until it's done.
+        FRAME_PTR.store(ptr, Ordering::Release);
+        FRAME_LEN.store(len, Ordering::Release);
+
+        FRAME_READY.signal(());
+        FRAME_CONSUMED.wait().await;
+
+        app_state.counter += 1;
+        Timer::after(Duration::from_millis(1)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn led_task(gpio: esp_hal::gpio::AnyPin<'static>, rmt: esp_hal::peripherals::RMT<'static>) {
+    log!("🌱 Start LED task...");
+
+    // LED panel is a strip of 256 WS2812B LEDs arranged in a 16x16 grid, in a serpentine pattern.
+    //
+    // The first strip LED is at the panel's bottom left corner, then the sequence goes right,
+    // then up a row, then goes left, then up a row, and so on in a serpentine pattern.
+    // Therefore, the top left corner is the last LED at strip position 255.
+    //
+    //   255 254 253 252 251 250 249 248 247 246 245 244 243 242 241 240
+    //   224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239
+    //   223 ...
+    //   ...
+    //    32 ...
+    //    31  30  29  28  27  26  25  24  23  22  21  20  19  18  17  16
+    //     0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
+
+    let freq = esp_hal::time::Rate::from_mhz(80);
+    type LedColor = RGB8;
+
+    let mut led = {
+        let rmt = Rmt::new(rmt, freq).expect("RMT should initialise");
+        RmtSmartLeds::<
+            { buffer_size::<LedColor>(NUM_LEDS) },
+            _,
+            LedColor,
+            color_order::Grb,
+            Ws2812Timing,
+        >::new_with_memsize(rmt.channel0, gpio, 4) // memsize 2 is glitchy
+        .expect("Should init LED driver")
+    };
+
+    // Clear all
+    // let mut data = [RGB8::default(); NUM_LEDS];
+    //
+    // // Set strip index 0 to red
+    // // data[0] = RGB8 { r: 255, g: 0, b: 0 };
+    // // data[1] = RGB8 { r: 0, g: 255, b: 0 };
+    // // data[15] = RGB8 { r: 0, g: 0, b: 255 };
+    // // data[16] = RGB8 {
+    // //     r: 200,
+    // //     g: 200,
+    // //     b: 0,
+    // // };
+    // data[240] = RGB8 { r: 255, g: 0, b: 0 };
+    //
+    // led.write(brightness(gamma(data.iter().cloned()), BRIGHTNESS))
+    //     .expect("Should write to LED");
+    //
+    // loop {}
+
+    let mut data = [RGB8::default(); NUM_LEDS];
+
+    log!("🔁 LED task waiting for frames...");
+    loop {
+        FRAME_READY.wait().await;
+
+        let ptr = FRAME_PTR.load(Ordering::Acquire);
+        let len = FRAME_LEN.load(Ordering::Acquire);
+
+        // SAFETY: wasmi_task is blocked on FRAME_CONSUMED, so the backing WASM memory is not
+        // mutated. The pointer and length were validated by wasmi_task before signalling.
+        let pixels: &[u8] = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let src = (y * WIDTH + x) * 3usize;
+                let dst = serpentine_index(x, y, WIDTH, HEIGHT);
+                data[dst] = RGB8 {
+                    r: pixels[src],
+                    g: pixels[src + 1],
+                    b: pixels[src + 2],
+                };
+            }
+        }
+
+        // Disable interrupts to avoid glitches
+        critical_section::with(|_| {
+            led.write(brightness(gamma(data.iter().cloned()), BRIGHTNESS))
+                .expect("Should write to LED");
+        });
+
+        FRAME_CONSUMED.signal(());
+    }
 }

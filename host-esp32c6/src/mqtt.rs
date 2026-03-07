@@ -25,13 +25,15 @@ const BROKER_PORT: u16 = 1883;
 
 #[embassy_executor::task]
 pub async fn mqtt_task(stack: Stack<'static>) {
+    log!("🌱 Start MQTT task...");
+
     loop {
         if stack.is_config_up() {
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
     }
-    defmt::info!("Network is up!");
+    log!("Network is up!");
 
     let mut rx_buffer = [0u8; 4096];
     let mut tx_buffer = [0u8; 4096];
@@ -43,7 +45,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         defmt::error!("TCP connect failed: {:?}", defmt::Debug2Format(&e));
         return;
     }
-    defmt::info!("TCP connected");
+    log!("TCP connected");
 
     let mut buf = [0u8; 1024];
     let mut buffer = BumpBuffer::new(&mut buf);
@@ -80,11 +82,11 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         .await
     {
         Ok(c) => {
-            defmt::info!("Connected to MQTT broker: {:?}", c);
-            defmt::info!("{:?}", client.client_config());
-            defmt::info!("{:?}", client.server_config());
-            defmt::info!("{:?}", client.shared_config());
-            defmt::info!("{:?}", defmt::Debug2Format(&client.session()));
+            log!("Connected to MQTT broker: {:?}", c);
+            log!("{:?}", client.client_config());
+            log!("{:?}", client.server_config());
+            log!("{:?}", client.shared_config());
+            log!("{:?}", defmt::Debug2Format(&client.session()));
         }
         Err(e) => {
             defmt::error!("MQTT connect failed: {:?}", e);
@@ -108,7 +110,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         unsafe { TopicName::new_unchecked(MqttString::from_slice("host-esp32c6/mbox").unwrap()) };
 
     match client.subscribe(topic.clone().into(), sub_options).await {
-        Ok(_) => defmt::info!("Sent Subscribe"),
+        Ok(_) => log!("Sent Subscribe"),
         Err(e) => {
             defmt::error!("Failed to subscribe: {:?}", e);
             return;
@@ -119,7 +121,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         Ok(Event::Suback(Suback {
             packet_identifier: _,
             reason_code,
-        })) => defmt::info!("Subscribed with reason code {:?}", reason_code),
+        })) => log!("Subscribed with reason code {:?}", reason_code),
         Ok(e) => {
             defmt::error!("Expected Suback but received event {:?}", e);
             return;
@@ -148,7 +150,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         .await
     {
         Ok(i) => {
-            defmt::info!("Published message with packet identifier {}", i);
+            log!("Published message with packet identifier {}", i);
             i
         }
         Err(e) => {
@@ -158,7 +160,8 @@ pub async fn mqtt_task(stack: Stack<'static>) {
     };
 
     let mut counter = 0;
-    let mut ticker = Ticker::every(Duration::from_secs(5));
+    //let mut ticker = Ticker::every(Duration::from_secs(5));
+    let mut ticker = Ticker::every(Duration::from_millis(5000));
 
     // Main loop: publish periodically + receive incoming messages
     loop {
@@ -177,7 +180,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
                     .publish(&pub_options, Bytes::from(message.as_bytes()))
                     .await
                 {
-                    Ok(_) => defmt::info!("Published"),
+                    Ok(_) => {} //log!("Published"),
                     Err(e) => {
                         defmt::error!("Publish failed: {:?}", e);
                         return;
@@ -194,28 +197,28 @@ pub async fn mqtt_task(stack: Stack<'static>) {
                         return;
                     }
                 };
-                defmt::info!("Received header {:?}", h.packet_type());
+                log!("Received header {:?}", h.packet_type());
                 match client.poll_body(h).await {
                     Ok(Event::Publish(msg)) => {
-                        // defmt::info!(
+                        // log!(
                         //     "Received publish on topic, payload len={}",
                         //     msg.message.len()
                         // );
                         //
                         // // Process the message here
                         // if let Ok(payload_str) = core::str::from_utf8(&msg.message) {
-                        //     defmt::info!("Message payload: \"{}\"", payload_str);
+                        //     log!("Message payload: \"{}\"", payload_str);
                         // } else {
-                        //     defmt::info!(
+                        //     log!(
                         //         "Message payload: {:?}",
                         //         defmt::Debug2Format(&msg.message)
                         //     );
                         // }
-                        defmt::info!("Received publish, payload len={}", msg.message.len());
+                        log!("Received publish, payload len={}", msg.message.len());
 
                         match serde_json_core::from_slice::<DeviceCommand>(&msg.message) {
                             Ok((command, _bytes_consumed)) => {
-                                defmt::info!("Parsed command: {:?}", command);
+                                log!("Parsed command: {:?}", command);
                                 handle_command(command).await;
                             }
                             Err(e) => {
@@ -235,7 +238,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
                             }
                         }
                     }
-                    Ok(e) => defmt::info!("Event: {:?}", e),
+                    Ok(e) => log!("Event: {:?}", e),
                     Err(e) => {
                         defmt::error!("poll_body failed: {:?}", e);
                         return;
@@ -247,9 +250,10 @@ pub async fn mqtt_task(stack: Stack<'static>) {
 }
 
 // Experimental message handling
+use crate::log;
 use serde::Deserialize;
 
-#[derive(Deserialize, defmt::Format)]
+#[derive(Deserialize, defmt::Format, Debug)]
 pub enum DeviceCommand {
     SetColor {
         r: u8,
@@ -273,23 +277,22 @@ pub enum DeviceCommand {
 async fn handle_command(cmd: DeviceCommand) {
     match cmd {
         DeviceCommand::SetColor { r, g, b } => {
-            defmt::info!("Setting color: ({}, {}, {})", r, g, b);
-            // drive your WS2812 strip, etc.
+            log!("Setting color: ({}, {}, {})", r, g, b);
         }
         DeviceCommand::SetBrightness { level } => {
-            defmt::info!("Setting brightness: {}", level);
+            log!("Setting brightness: {}", level);
         }
         DeviceCommand::DisplayPattern {
             pattern_id,
             speed_ms,
         } => {
-            defmt::info!("Pattern {} at {}ms", pattern_id, speed_ms);
+            log!("Pattern {} at {}ms", pattern_id, speed_ms);
         }
-        DeviceCommand::SetWifi { ssid, password } => {
-            defmt::info!("WiFi config received for SSID: {}", ssid.as_str());
+        DeviceCommand::SetWifi { ssid, password: _ } => {
+            log!("WiFi config received for SSID: {}", ssid.as_str());
         }
         DeviceCommand::Reboot => {
-            defmt::info!("Reboot requested");
+            log!("Reboot requested");
             //esp_hal::reset::software_reset();
         }
     }
