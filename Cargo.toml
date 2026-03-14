@@ -1,0 +1,34 @@
+[workspace]
+members = [
+    "dummy",
+    "guest",
+    "host-common",
+    "host-esp32c6",
+]
+default-members = [
+    "dummy",
+    "host-common",
+]
+resolver = "3"
+
+# Embedded/WASM profile overrides
+
+[profile.dev.package.host-esp32c6]
+opt-level = "s" # debug builds too slow without some optimisation
+
+# lto, panic, and incremental are profile-wide (cannot be set per-package).
+# These are the right defaults for embedded/WASM release builds and acceptable
+# for native crates too (only affects `--release`).
+[profile.release]
+incremental = false
+lto = "fat"
+
+[profile.release.package.guest]
+codegen-units = 1
+
+[profile.release.package.host-esp32c6]
+codegen-units = 1  # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+opt-level = "s"
+overflow-checks = false

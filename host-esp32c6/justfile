@@ -1,17 +1,18 @@
 export ESPFLASH_BAUD := "921600"
+target := "riscv32imac-unknown-none-elf"
 
 default:
     just --list
 
 build:
-    cargo build --release
+    cargo build --release --target={{ target }}
 
 run: build
-    cargo run --release
+    cargo run --release --target={{ target }}
 
 clean:
     cargo clean
 
 ci:
-    cargo clippy -- -D warnings
+    cargo clippy --target={{ target }} -- -D warnings
     cargo fmt --all -- --check

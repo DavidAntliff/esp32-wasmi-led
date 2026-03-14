@@ -230,8 +230,7 @@ async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
 async fn wasmi_task() {
     log!("🌱 Start WASMI task...");
 
-    let wasm_bytes =
-        include_bytes!("../../../guest/target/wasm32-unknown-unknown/release/guest.wasm");
+    let wasm_bytes = include_bytes!("../../../target/wasm32-unknown-unknown/release/guest.wasm");
     log!("⚙️ Initialising WASMI engine...");
     let engine = Engine::default();
     log!("⚙️ Initialising WASMI module...");
