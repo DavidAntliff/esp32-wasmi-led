@@ -29,4 +29,17 @@ test:
     cargo test -p host-common
 
 mosquitto:
-    docker run -it -p 1883:1883 -v "$PWD/mosquitto/config:/mosquitto/config" -v /mosquitto/data -v /mosquitto/log eclipse-mosquitto
+    docker network remove mqtt || true
+    docker network create mqtt
+    docker run \
+        -it \
+        --name mqtt-broker \
+        --network mqtt \
+        -p 1883:1883 \
+        -v "$PWD/mosquitto/config:/mosquitto/config" \
+        -v /mosquitto/data \
+        -v /mosquitto/log \
+        eclipse-mosquitto
+
+mosquitto-monitor:
+    docker run -it --network mqtt eclipse-mosquitto mosquitto_sub -d -h mqtt-broker -p 1883 -t '#' -v

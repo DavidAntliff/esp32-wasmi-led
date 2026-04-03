@@ -6,8 +6,8 @@ with an ESP32-C6 microcontroller (`no_std` + `alloc`) to control an LED matrix.
 `host-esp32c6` is a **riscv32imac-unknown-none-elf** targeted application that provides
 some host functions and executes a built-in WASM program.
 
-`guest-fill` is a simple WebAssembly program that, when run on the host, makes use of the host
-function bindings to access host features and set the entire matrix to a single colour.
+`guest` is a WebAssembly program that, when run on the host, makes use of the host
+function bindings to access host features and rotate the LED matrix through various patterns.
 
 The host app assumes a grid of 16x16 WS21812 LEDs connected to GPIO10 in a sequential serpentine
 arrangement. A Wokwi configuration is provided to simulate this, if such hardware is not available.
@@ -47,4 +47,3 @@ Ideas for Guest Apps
 
 Handy to let the image buffer be persistent, so that, for example, can cross-fade from one guest to another, or a game
 or cellular-automata can use a previous image as a starting point. This creates a lot of emergent activities.
-
