@@ -73,8 +73,8 @@ pub async fn led_task(
         let ptr = FRAME_PTR.load(Ordering::Acquire);
         let len = FRAME_LEN.load(Ordering::Acquire);
 
-        // SAFETY: wasmi_task is blocked on FRAME_CONSUMED, so the backing WASM memory is not
-        // mutated. The pointer and length were validated by wasmi_task before signalling.
+        // SAFETY: buffer writer is blocked on FRAME_CONSUMED, so the backing WASM memory is not
+        // mutated. The pointer and length were validated by the writer task before signalling.
         let pixels: &[u8] = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
 
         for y in 0..LED_PANEL_HEIGHT {

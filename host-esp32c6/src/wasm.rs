@@ -1,11 +1,30 @@
-use crate::{log, AppState, GuestState, FRAME_CONSUMED, FRAME_LEN, FRAME_PTR, FRAME_READY};
-use common::LED_PANEL_NUM_LEDS;
+use crate::{log, Mode, FRAME_CONSUMED, FRAME_LEN, FRAME_PTR, FRAME_READY, HOST_BUFFER_PTR, MODE};
+use common::LED_BUFFER_SIZE;
 use core::sync::atomic::Ordering;
+use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 use esp_hal::time::Instant;
-use wasmi::{Engine, Linker, Module, Store};
+use wasmi::{Engine, Linker, Memory, Module, Store, TypedFunc};
 
 const TICKS_PER_SECOND: u64 = 256;
+
+pub struct AppState {
+    start_time: Instant,
+    ticks: u64,
+    counter: u64,
+}
+
+pub struct GuestState {
+    _engine: Engine,
+    store: Store<()>,
+    _linker: Linker<()>,
+    memory: Memory,
+    host_buffer_offset: u32,
+
+    // Guest exports
+    _init: TypedFunc<(), ()>,
+    update: TypedFunc<(u64, u64, u32), u32>,
+}
 
 #[embassy_executor::task]
 pub async fn wasm_task() {
@@ -41,9 +60,13 @@ pub async fn wasm_task() {
     );
 
     assert!(
-        host_buffer_offset as usize + LED_PANEL_NUM_LEDS * 3 <= (memory.data_size(&store)),
+        host_buffer_offset as usize + LED_BUFFER_SIZE <= (memory.data_size(&store)),
         "Not enough memory for host pixel buffer"
     );
+
+    // Store the host buffer pointer for sharing between tasks
+    let host_buffer_ptr = memory.data(&store).as_ptr() as usize + host_buffer_offset as usize;
+    HOST_BUFFER_PTR.store(host_buffer_ptr, Ordering::Release);
 
     let update_func = instance
         .get_typed_func::<(u64, u64, u32), u32>(&mut store, "update")
@@ -74,40 +97,63 @@ pub async fn wasm_task() {
         counter: 0,
     };
 
+    let mut current_mode = Mode::default();
+
+    let mut receiver = MODE.receiver().unwrap();
+
     log!("🔁 WASMI entering main loop...");
+
     loop {
-        let elapsed = Instant::now() - app_state.start_time;
-        app_state.ticks = elapsed.as_millis() * TICKS_PER_SECOND / 1000;
+        match select(receiver.changed(), Timer::after(Duration::from_millis(1))).await {
+            Either::First(mode) => {
+                current_mode = mode;
+            }
+            Either::Second(_) => {
+                if current_mode != Mode::Wasm {
+                    continue;
+                }
 
-        let pixel_buffer = guest_state
-            .update
-            .call(
-                &mut guest_state.store,
-                (
-                    app_state.ticks,
-                    app_state.counter,
-                    guest_state.host_buffer_offset,
-                ),
-            )
-            .expect("Failed to call 'update' function");
+                let elapsed = Instant::now() - app_state.start_time;
+                app_state.ticks = elapsed.as_millis() * TICKS_PER_SECOND / 1000;
 
-        // Get a raw pointer to the pixel data inside WASM linear memory
-        let mem_data = guest_state.memory.data(&guest_state.store);
-        let offset = pixel_buffer as usize;
-        let len = LED_PANEL_NUM_LEDS * 3;
-        assert!(offset + len <= mem_data.len(), "pixel buffer out of bounds");
+                let pixel_buffer = guest_state
+                    .update
+                    .call(
+                        &mut guest_state.store,
+                        (
+                            app_state.ticks,
+                            app_state.counter,
+                            guest_state.host_buffer_offset,
+                        ),
+                    )
+                    .expect("Failed to call 'update' function");
 
-        let ptr = mem_data[offset..].as_ptr() as usize;
+                // Check mode wasn't changed while guest was executing
+                if let Some(mode) = receiver.try_changed() {
+                    current_mode = mode;
+                    if current_mode != Mode::Wasm {
+                        continue; // discard this frame
+                    }
+                }
 
-        // Publish the pointer — safe because led_task won't read until signalled,
-        // and we block until it's done.
-        FRAME_PTR.store(ptr, Ordering::Release);
-        FRAME_LEN.store(len, Ordering::Release);
+                // Get a raw pointer to the pixel data inside WASM linear memory
+                let mem_data = guest_state.memory.data(&guest_state.store);
+                let offset = pixel_buffer as usize;
+                let len = LED_BUFFER_SIZE;
+                assert!(offset + len <= mem_data.len(), "pixel buffer out of bounds");
 
-        FRAME_READY.signal(());
-        FRAME_CONSUMED.wait().await;
+                let ptr = mem_data[offset..].as_ptr() as usize;
 
-        app_state.counter += 1;
-        Timer::after(Duration::from_millis(1)).await;
+                // Publish the pointer — safe because led_task won't read until signalled,
+                // and we block until it's done.
+                FRAME_PTR.store(ptr, Ordering::Release);
+                FRAME_LEN.store(len, Ordering::Release);
+
+                FRAME_READY.signal(());
+                FRAME_CONSUMED.wait().await;
+
+                app_state.counter += 1;
+            }
+        }
     }
 }

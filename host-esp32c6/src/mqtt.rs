@@ -2,6 +2,7 @@
 //   https://youtrack.jetbrains.com/issue/RUST-19797/False-external-linter-clippy-warnings-in-nostd-esp32-project
 //#![cfg(not(test))]
 
+use crate::{log, Command, DIRECT_CMD, MODE};
 use core::fmt::Write;
 use embassy_futures::select::{select, Either};
 use embassy_net::{tcp::TcpSocket, Ipv4Address, Stack};
@@ -216,10 +217,10 @@ pub async fn mqtt_task(stack: Stack<'static>) {
                         // }
                         log!("Received publish, payload len={}", msg.message.len());
 
-                        match serde_json_core::from_slice::<DeviceCommand>(&msg.message) {
+                        match serde_json_core::from_slice::<Command>(&msg.message) {
                             Ok((command, _bytes_consumed)) => {
                                 log!("Parsed command: {:?}", command);
-                                handle_command(command).await;
+                                dispatch_command(command).await;
                             }
                             Err(e) => {
                                 // Log what we received for debugging
@@ -249,51 +250,15 @@ pub async fn mqtt_task(stack: Stack<'static>) {
     }
 }
 
-// Experimental message handling
-use crate::log;
-use serde::Deserialize;
-
-#[derive(Deserialize, defmt::Format, Debug)]
-pub enum DeviceCommand {
-    SetColor {
-        r: u8,
-        g: u8,
-        b: u8,
-    },
-    SetBrightness {
-        level: u8,
-    },
-    DisplayPattern {
-        pattern_id: u16,
-        speed_ms: u32,
-    },
-    SetWifi {
-        ssid: heapless::String<32>,
-        password: heapless::String<64>,
-    },
-    Reboot,
-}
-
-async fn handle_command(cmd: DeviceCommand) {
+async fn dispatch_command(cmd: Command) {
+    log!("dispatch_command: {:?}", cmd);
     match cmd {
-        DeviceCommand::SetColor { r, g, b } => {
-            log!("Setting color: ({}, {}, {})", r, g, b);
+        Command::SetMode(mode) => {
+            MODE.sender().send(mode);
         }
-        DeviceCommand::SetBrightness { level } => {
-            log!("Setting brightness: {}", level);
-        }
-        DeviceCommand::DisplayPattern {
-            pattern_id,
-            speed_ms,
-        } => {
-            log!("Pattern {} at {}ms", pattern_id, speed_ms);
-        }
-        DeviceCommand::SetWifi { ssid, password: _ } => {
-            log!("WiFi config received for SSID: {}", ssid.as_str());
-        }
-        DeviceCommand::Reboot => {
-            log!("Reboot requested");
-            //esp_hal::reset::software_reset();
+
+        Command::DirectCommand(cmd) => {
+            DIRECT_CMD.sender().send(cmd).await;
         }
     }
 }

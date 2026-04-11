@@ -47,3 +47,11 @@ Ideas for Guest Apps
 
 Handy to let the image buffer be persistent, so that, for example, can cross-fade from one guest to another, or a game
 or cellular-automata can use a previous image as a starting point. This creates a lot of emergent activities.
+
+## Use of AI
+
+The author acknowledges the use of the help of AI tools such as Microsoft Copilot and Anthropic Claude Opus.
+
+Use of AI was limited to architectural discussions, API guidance, local auto-completion in parts, and boilerplate generation.
+
+This repository was not "vibe coded" and the author hand-wrote most of the code in this repository.

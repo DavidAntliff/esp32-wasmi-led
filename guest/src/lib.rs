@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+use common::{set_all, set_color};
+use common::{LED_BUFFER_SIZE, LED_PANEL_HEIGHT, LED_PANEL_WIDTH};
 use core::cell::UnsafeCell;
 
 // Panic handler required for no_std
@@ -26,10 +28,9 @@ const TICKS_PER_SECOND: u64 = 256; // TODO: move to SDK
 
 const FPS: u64 = 60; // animation target speed
 
-const PIXEL_HEIGHT: usize = 16;
-const PIXEL_WIDTH: usize = 16;
-const PIXEL_CHANNELS: usize = 3; // RGB
-const PIXEL_BUFFER_SIZE: usize = PIXEL_HEIGHT * PIXEL_WIDTH * PIXEL_CHANNELS;
+const PIXEL_HEIGHT: usize = LED_PANEL_HEIGHT;
+const PIXEL_WIDTH: usize = LED_PANEL_WIDTH;
+const PIXEL_BUFFER_SIZE: usize = LED_BUFFER_SIZE;
 
 // SAFETY: WASM is single-threaded, so this is safe
 struct SyncWrapper<T> {
@@ -53,57 +54,31 @@ static ANIM_0001_IMAGE_DATA: [&[u8; 768]; 6] = [
     include_bytes!("../target/anim-0001_005.raw"),
 ];
 
-#[inline(always)]
-fn offset(x: usize, y: usize) -> usize {
-    (y * PIXEL_WIDTH + x) * PIXEL_CHANNELS
-}
-
-#[inline(always)]
-fn set_color(buffer: *mut u8, (x, y): (usize, usize), (r, g, b): (u8, u8, u8)) {
-    if x >= PIXEL_WIDTH || y >= PIXEL_HEIGHT {
-        return; // Out of bounds
-    }
-    let offset = offset(x, y);
-    unsafe {
-        buffer.add(offset).write(r);
-        buffer.add(offset + 1).write(g);
-        buffer.add(offset + 2).write(b);
-    }
-}
-
-fn clear(buffer: *mut u8, color: (u8, u8, u8)) {
-    // TODO: optimize
-    for y in 0..PIXEL_HEIGHT {
-        for x in 0..PIXEL_WIDTH {
-            set_color(buffer, (x, y), color);
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn buffer_ptr() -> *mut u8 {
+// #[unsafe(no_mangle)]
+// pub extern "C" fn buffer_ptr() -> *mut u8 {
+fn buffer_ptr() -> *mut u8 {
     PIXEL_BUFFER.inner.get() as *mut u8
 }
-
-#[unsafe(no_mangle)]
-pub extern "C" fn mem_write(offset: u32, value: u32) {
-    let ptr = buffer_ptr();
-    if offset as usize >= PIXEL_BUFFER_SIZE {
-        panic!("Offset out of bounds");
-    }
-    unsafe {
-        ptr.add(offset as usize).write(value as u8);
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn mem_read(offset: u32) -> u32 {
-    let ptr = buffer_ptr();
-    if offset as usize >= PIXEL_BUFFER_SIZE {
-        panic!("Offset out of bounds");
-    }
-    unsafe { ptr.add(offset as usize).read() as u32 }
-}
+//
+// #[unsafe(no_mangle)]
+// pub extern "C" fn mem_write(offset: u32, value: u32) {
+//     let ptr = buffer_ptr();
+//     if offset as usize >= PIXEL_BUFFER_SIZE {
+//         panic!("Offset out of bounds");
+//     }
+//     unsafe {
+//         ptr.add(offset as usize).write(value as u8);
+//     }
+// }
+//
+// #[unsafe(no_mangle)]
+// pub extern "C" fn mem_read(offset: u32) -> u32 {
+//     let ptr = buffer_ptr();
+//     if offset as usize >= PIXEL_BUFFER_SIZE {
+//         panic!("Offset out of bounds");
+//     }
+//     unsafe { ptr.add(offset as usize).read() as u32 }
+// }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
@@ -140,11 +115,13 @@ fn corners(_ticks: u64, _frame: u64, host_buffer_offset: u32) -> u32 {
     // Use the host-provided buffer
     let ptr = host_buffer_offset as *mut u8;
 
-    clear(ptr, (0, 0, 0));
-    set_color(ptr, (0, 0), (255, 0, 0)); // top-left is red
-    set_color(ptr, (PIXEL_WIDTH - 1, 0), (0, 255, 0)); // top-right is green
-    set_color(ptr, (0, PIXEL_HEIGHT - 1), (0, 0, 255)); // bottom-left is blue
-    set_color(ptr, (PIXEL_WIDTH - 1, PIXEL_HEIGHT - 1), (200, 200, 0)); // bottom-right is yellow
+    unsafe {
+        set_all(ptr, (0, 0, 0));
+        set_color(ptr, (0, 0), (255, 0, 0)); // top-left is red
+        set_color(ptr, (PIXEL_WIDTH - 1, 0), (0, 255, 0)); // top-right is green
+        set_color(ptr, (0, PIXEL_HEIGHT - 1), (0, 0, 255)); // bottom-left is blue
+        set_color(ptr, (PIXEL_WIDTH - 1, PIXEL_HEIGHT - 1), (200, 200, 0)); // bottom-right is yellow
+    }
 
     host_buffer_offset
 }
@@ -176,13 +153,7 @@ pub extern "C" fn rainbow_cycle(ticks: u64, _frame: u64, host_buffer_offset: u32
 
             // Simple HSV to RGB (S=1, V=1)
             let (r, g, b) = hsv_to_rgb(hue as u8);
-
-            let offset = (y * PIXEL_WIDTH + x) * PIXEL_CHANNELS;
-            unsafe {
-                ptr.add(offset).write(r);
-                ptr.add(offset + 1).write(g);
-                ptr.add(offset + 2).write(b);
-            }
+            unsafe { set_color(ptr, (x, y), (r, g, b)) };
         }
     }
 
@@ -240,13 +211,7 @@ pub extern "C" fn proc0001(ticks: u64, _frame: u64, _host_buffer_offset: u32) ->
             let hue = (x as u64 + frame) % 256;
 
             let (r, g, b) = hsv_to_rgb(hue as u8);
-
-            let offset = (y * PIXEL_WIDTH + x) * PIXEL_CHANNELS;
-            unsafe {
-                ptr.add(offset).write(r);
-                ptr.add(offset + 1).write(g);
-                ptr.add(offset + 2).write(b);
-            }
+            unsafe { set_color(ptr, (x, y), (r, g, b)) };
         }
     }
 
