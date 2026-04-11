@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "common",
     "dummy",
     "guest",
     "host-common",

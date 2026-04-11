@@ -41,6 +41,7 @@ esp-hal-smartled2 = "0.28.1"
 smart-leds = "0.4.0"
 
 host-common = { path = "../host-common" }
+common = { path = "../common" }
 
 # Let's try Embassy...
 esp-rtos = { version = "0.2.0", features = ["esp32c6", "embassy", "esp-alloc", "esp-radio"] }
