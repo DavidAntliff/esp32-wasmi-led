@@ -50,8 +50,11 @@ or cellular-automata can use a previous image as a starting point. This creates 
 
 ## Use of AI
 
-The author acknowledges the use of the help of AI tools such as Microsoft Copilot and Anthropic Claude Opus.
+The author acknowledges the use of the help of AI tools such as Microsoft Copilot and Anthropic Claude Code.
 
-Use of AI was limited to architectural discussions, API guidance, local auto-completion in parts, and boilerplate generation.
+Use of AI includes architectural discussions, API guidance, local auto-completion in parts, and boilerplate code
+generation, as well as some front-end code. AI has also been used to generate some of the documentation in this
+repository.
 
-This repository was not "vibe coded" and the author hand-wrote most of the code in this repository.
+This repository was not "vibe coded", and the author is aware and has a working knowledge of all code in this
+repository.

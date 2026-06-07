@@ -32,6 +32,7 @@ mosquitto:
     docker network remove mqtt || true
     docker network create mqtt
     docker run \
+        --rm \
         -it \
         --name mqtt-broker \
         --network mqtt \

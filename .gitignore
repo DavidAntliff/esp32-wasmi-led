@@ -1,2 +1,8 @@
 **/target/
+.envrc
 
+# Claude Code: project config (.claude/skills, .claude/rules) is tracked, but personal files are not.
+# The negation also overrides any user-global '**/.claude/' ignore.
+!.claude/
+**/.claude/settings.local.json
+CLAUDE.local.md
