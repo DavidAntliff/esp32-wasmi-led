@@ -1,0 +1,5 @@
+run:
+    trunk serve --port 8080
+
+build:
+    trunk build

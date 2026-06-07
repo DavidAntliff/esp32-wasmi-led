@@ -1,11 +1,11 @@
-use crate::{log, FRAME_CONSUMED, FRAME_LEN, FRAME_PTR, FRAME_READY};
+use crate::{FRAME_CONSUMED, FRAME_LEN, FRAME_PTR, FRAME_READY, log};
 use common::{LED_PANEL_HEIGHT, LED_PANEL_NUM_LEDS, LED_PANEL_WIDTH};
 use core::sync::atomic::Ordering;
 use esp_hal::rmt::Rmt;
-use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, Ws2812Timing};
+use esp_hal_smartled::{RmtSmartLeds, Ws2812Timing, buffer_size, color_order};
 use host_common::serpentine_index;
 use smart_leds::SmartLedsWrite;
-use smart_leds::{brightness, gamma, RGB8};
+use smart_leds::{RGB8, brightness, gamma};
 
 const BRIGHTNESS: u8 = 100;
 

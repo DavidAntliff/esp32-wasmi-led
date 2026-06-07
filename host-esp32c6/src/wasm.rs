@@ -1,7 +1,7 @@
-use crate::{log, Mode, FRAME_CONSUMED, FRAME_LEN, FRAME_PTR, FRAME_READY, HOST_BUFFER_PTR, MODE};
+use crate::{FRAME_CONSUMED, FRAME_LEN, FRAME_PTR, FRAME_READY, HOST_BUFFER_PTR, MODE, Mode, log};
 use common::LED_BUFFER_SIZE;
 use core::sync::atomic::Ordering;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Timer};
 use esp_hal::time::Instant;
 use wasmi::{Engine, Linker, Memory, Module, Store, TypedFunc};

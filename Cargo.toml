@@ -5,7 +5,13 @@ members = [
     "guest",
     "host-common",
     "host-esp32c6",
+    # Web stack (browser + backend tiers), built per-crate via just/trunk — see justfile.
+    "web-common",
+    "backend",
+    "frontend",
 ]
+# Kept minimal so a bare `cargo check`/`build` runs natively without the
+# cross-compiled (guest/host-esp32c6) or web-only (frontend) crates.
 default-members = [
     "dummy",
     "host-common",

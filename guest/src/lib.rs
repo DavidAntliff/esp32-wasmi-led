@@ -1,8 +1,8 @@
 #![no_std]
 #![no_main]
 
-use common::{set_all, set_color};
 use common::{LED_BUFFER_SIZE, LED_PANEL_HEIGHT, LED_PANEL_WIDTH};
+use common::{set_all, set_color};
 use core::cell::UnsafeCell;
 
 // Panic handler required for no_std

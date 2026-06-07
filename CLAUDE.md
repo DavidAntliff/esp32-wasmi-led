@@ -16,10 +16,19 @@ Project-specific capabilities live in `.claude/skills/`: **build-and-flash**, **
 - **Targets when running cargo by hand.** guest → `--target=wasm32-unknown-unknown`; host-esp32c6 →
   `--target=riscv32imac-unknown-none-elf`; `common`/`host-common`/`dummy` build natively.
 - **Don't trust a bare `cargo check`.** `default-members` is only `dummy` + `host-common`, so a
-  root-level `cargo check`/`build` skips the cross-compiled crates and can look green while `guest` or
-  `host-esp32c6` is broken. Use `-p <crate>` with the right `--target`, or `just build` / `just ci`.
-- **Tests.** Only `cargo test -p host-common` works. The guest and host-esp32c6 are `no_std` embedded/WASM
-  targets with no test harness — don't try to `cargo test` them.
+  root-level `cargo check`/`build` skips the cross-compiled crates **and the web crates** and can look
+  green while `guest`/`host-esp32c6`/`frontend` is broken. Use `-p <crate>` with the right `--target`, or
+  `just build` / `just ci`.
+- **Web stack (`backend`/`frontend`/`web-common`).** Imported from `egui-axum-mqtt-demo`; **not** in
+  `default-members`. `backend`/`web-common` build natively (`-p`), but `frontend` is **wasm-only** — build
+  it with **trunk** (`just run-frontend` / `just build-web` → `backend/dist/`; `cargo install trunk
+  --locked`), not bare `cargo build`. `just test-backend` runs the backend integration tests but **needs a
+  running broker** (`just mosquitto`). The backend dials `localhost:1883`, so it must run on the same host
+  as the broker the device uses (`192.168.1.201`) for the ping to round-trip; the MQTT prefix
+  `esp32-wasmi-led` (`DEFAULT_PREFIX` in `backend/src/lib.rs`) must match the device's
+  `PING_REQ_TOPIC`/`PING_RESP_TOPIC` in `mqtt.rs`.
+- **Tests.** Only `cargo test -p host-common` (and `just test-backend`, needs a broker) work. The guest
+  and host-esp32c6 are `no_std` embedded/WASM targets with no test harness — don't try to `cargo test` them.
 - **Linting / "is it green?".** There is no GitHub CI (`.github/` is empty). Run `just ci` (clippy
   `-D warnings` on both targets + `fmt --check`) before claiming the build is clean.
 - **Logging.** Use the `log!` macro (`host-esp32c6/src/lib.rs`); it dual-emits to defmt (RTT) and

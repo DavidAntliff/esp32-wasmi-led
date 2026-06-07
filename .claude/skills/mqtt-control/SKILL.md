@@ -5,8 +5,9 @@ description: Control the LED matrix device over MQTT and run/monitor the local b
 
 # MQTT Control (esp32-wasmi-led)
 
-The device connects over WiFi to an MQTT v5 broker, **subscribes to `host-esp32c6/mbox`** for commands,
-and **publishes status to `test`**. Config lives in `host-esp32c6/src/mqtt.rs`.
+The device connects over WiFi to an MQTT v5 broker, **subscribes to `host-esp32c6/mbox`** for commands
+and to **`esp32-wasmi-led/ping/request`** for liveness pings, and **publishes status to `test`**. Config
+lives in `host-esp32c6/src/mqtt.rs`.
 
 ## Broker
 
@@ -63,6 +64,27 @@ mosquitto_pub -h 192.168.1.201 -p 1883 -u testUser -P testPass -t host-esp32c6/m
 mosquitto_sub -h 192.168.1.201 -p 1883 -u testUser -P testPass -t test -v
 ```
 
+## Ping (liveness round-trip)
+
+The axum backend's **Ping Device** button publishes `{"correlation_id":"<uuid>","message":"ping"}` to
+`esp32-wasmi-led/ping/request`. The device replies on `esp32-wasmi-led/ping/response` with
+`{"correlation_id":"<same uuid>","message":"pong from host-esp32c6"}`, which the backend relays back to
+the browser. These topics use the backend's `DEFAULT_PREFIX` (`esp32-wasmi-led`, in `backend/src/lib.rs`)
+and must stay in sync with `PING_REQ_TOPIC` / `PING_RESP_TOPIC` in `host-esp32c6/src/mqtt.rs`.
+
+Test it directly against the broker (no backend/browser needed):
+
+```sh
+# watch for the device's pong, then send a ping
+mosquitto_sub -h 192.168.1.201 -p 1883 -u testUser -P testPass -t 'esp32-wasmi-led/ping/response' -v &
+mosquitto_pub -h 192.168.1.201 -p 1883 -u testUser -P testPass -t esp32-wasmi-led/ping/request \
+  -m '{"correlation_id":"abc","message":"ping"}'
+# expect: esp32-wasmi-led/ping/response {"correlation_id":"abc","message":"pong from host-esp32c6"}
+```
+
+End-to-end via the web app: `just mosquitto`, `just run-backend`, `just run-frontend`, open
+<http://localhost:8080>, click **Ping Device** (see AGENTS.md → "Web stack").
+
 ## Bulk / full-buffer updates
 
 There is no batch command — `SetAll` fills one color, `SetPixel` sets one pixel. To paint an arbitrary
@@ -87,4 +109,5 @@ you only need to set the pixels you want changed, or `SetAll` black first for a 
 Malformed JSON is logged and ignored by the device (it won't crash). To confirm commands landed, grep
 the `just run` log (the firmware streams over RTT) for `Parsed command:`, `SetPixel:` / `SetAll:` (these
 are logged only once `direct_task` actually applies them, i.e. mode is `Direct` and the buffer pointer is
-valid), or `Failed to parse:`.
+valid), or `Failed to parse:`. For pings, look for `Received publish on 'esp32-wasmi-led/ping/request'`
+and `Published pong to ...`; at boot, the device logs `Subscribed` twice (mbox + ping).

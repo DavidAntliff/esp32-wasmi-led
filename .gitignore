@@ -1,6 +1,9 @@
 **/target/
 .envrc
 
+# Frontend WASM build output (trunk), served by the backend
+backend/dist/
+
 # Claude Code: project config (.claude/skills, .claude/rules) is tracked, but personal files are not.
 # The negation also overrides any user-global '**/.claude/' ignore.
 !.claude/

@@ -1,10 +1,10 @@
 use crate::{
-    log, DirectCommand, Mode, DIRECT_CMD, FRAME_CONSUMED, FRAME_LEN, FRAME_PTR,
-    FRAME_READY, HOST_BUFFER_PTR, MODE,
+    DIRECT_CMD, DirectCommand, FRAME_CONSUMED, FRAME_LEN, FRAME_PTR, FRAME_READY, HOST_BUFFER_PTR,
+    MODE, Mode, log,
 };
-use common::{set_all, set_color, LED_BUFFER_SIZE};
+use common::{LED_BUFFER_SIZE, set_all, set_color};
 use core::sync::atomic::Ordering;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 
 #[embassy_executor::task]
 pub async fn direct_task() {

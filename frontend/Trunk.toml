@@ -1,0 +1,11 @@
+[build]
+dist = "../backend/dist"
+
+# HTTP API proxy
+[[proxy]]
+backend = "http://localhost:3000/api/"
+
+# WebSocket proxy (separate entry)
+[[proxy]]
+backend = "ws://localhost:3000/api/ws"
+ws = true

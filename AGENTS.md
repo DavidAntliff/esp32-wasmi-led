@@ -23,7 +23,9 @@ The device connects to WiFi and is controlled over MQTT (Embassy async runtime).
 
 ## Architecture
 
-Five workspace crates (`Cargo.toml`, resolver `"3"`, edition 2024). Dependencies:
+Eight workspace crates (`Cargo.toml`, resolver `"3"`, edition 2024). The five **device-tier** crates are
+below; the three **web-stack** crates (`web-common`, `backend`, `frontend`) are covered under
+[Web stack](#web-stack-backend--frontend). Device-tier dependencies:
 `guest → common`; `host-esp32c6 → common + host-common`; `common`, `host-common`, `dummy` are standalone.
 
 | Crate          | Target                         | Role                                                                                    |
@@ -76,6 +78,11 @@ Configured in `host-esp32c6/src/mqtt.rs` (MQTT v5 via `rust-mqtt`):
 - **Subscribes** to `host-esp32c6/mbox` — inbound control commands (JSON `Command`, parsed with
   `serde_json_core`).
 - **Publishes** status to `test` (a hello message, then `Update #N from host-esp32c6` every 5 s).
+- **Ping liveness**: also subscribes to `esp32-wasmi-led/ping/request`; on each ping it echoes the
+  request's `correlation_id` and publishes `{"correlation_id":"<id>","message":"pong from host-esp32c6"}`
+  to `esp32-wasmi-led/ping/response`. This backs the backend's "Ping Device" round-trip. The topic prefix
+  must match the backend's `DEFAULT_PREFIX`; see `PING_REQ_TOPIC`/`PING_RESP_TOPIC` in `mqtt.rs` and
+  [Web stack](#web-stack-backend--frontend).
 - **The broker must be reachable at `BROKER_IP` when the device boots.** If nothing is listening there,
   `mqtt_task` logs `TCP connect failed` / `ConnectionReset` and **exits — it does not retry until the
   device reboots**, so bring the broker up first. `just mosquitto` runs one locally (see the
@@ -178,6 +185,46 @@ So the guest must be fully built before the host. `just build` handles this orde
 A Wokwi config (`host-esp32c6/wokwi.toml` + `diagram.json`) is provided to simulate the board + LED
 matrix without hardware.
 
+## Web stack (backend + frontend)
+
+Imported from the `egui-axum-mqtt-demo` template, these three crates provide the **browser → backend**
+tiers. They are **not** in `default-members` and are built per-crate via `just`/`trunk` (see the root
+`justfile`), never by a bare `cargo build`.
+
+| Crate        | Target      | Role                                                                                    |
+|--------------|-------------|-----------------------------------------------------------------------------------------|
+| `web-common` | native/WASM | Shared `serde` WS/HTTP message types (`ClientMsg`, `ServerMsg`, `LastMessage`)           |
+| `backend`    | native      | `axum` 0.8 server; bridges WebSocket/HTTP ↔ MQTT (`rumqttc` 0.25); serves the frontend   |
+| `frontend`   | `wasm32`    | `eframe`/`egui` 0.33 app, built by `trunk`; talks to `backend` over WebSocket + HTTP GET |
+
+> Naming: the template's `common` crate was imported as **`web-common`** to avoid clashing with this
+> repo's existing device-tier `common`.
+
+- **Ports**: MQTT broker `1883`, backend `0.0.0.0:3000`, trunk dev server `8080`.
+- **MQTT topic prefix**: `esp32-wasmi-led` (`DEFAULT_PREFIX` in `backend/src/lib.rs`) — topics
+  `esp32-wasmi-led/{send,poll,live,ping/request,ping/response}`. Only `ping/request`→`ping/response` is
+  wired to the device today (see [MQTT Control Protocol](#mqtt-control-protocol)); `send`/`poll`/`live`
+  are demo plumbing not yet mapped to the device's `Command` protocol.
+- **Broker host**: the backend connects to `localhost:1883`, so it must run on the **same host** as the
+  broker the device dials (`192.168.1.201`) for the ping to round-trip end-to-end.
+- **Frontend serving**: `trunk build` emits the WASM bundle to `backend/dist/` (git-ignored) and the
+  backend serves it via `ServeDir`; in dev, `trunk serve` (8080) proxies `/api` → backend (3000) instead.
+- **The behaviour is the imported demo's, unchanged** (realtime send, poll, live receive, ping) — only
+  ping does anything real against the device so far.
+
+Run it (each in its own terminal; **broker first**):
+
+```sh
+just mosquitto       # MQTT broker on :1883
+just run-backend     # axum on :3000  (logs "Listening on http://localhost:3000")
+just run-frontend    # trunk serve on :8080 (hot-reload), proxies /api -> :3000
+# open http://localhost:8080  →  "Ping Device" round-trips to the ESP32-C6
+```
+
+`just build-web` builds both tiers (frontend WASM into `backend/dist/`); `just test-backend` runs the
+backend integration tests (needs a running broker). **Trunk** is an extra prerequisite:
+`cargo install trunk --locked` (uses the `wasm32-unknown-unknown` target already in `rust-toolchain.toml`).
+
 ## Guest Animations & Asset Pipeline
 
 `guest/src/lib.rs::update()` dispatches by tick (256 ticks/sec): the first 512 ticks run a boot test
@@ -217,27 +264,25 @@ To add an animation:
 
 ## Roadmap / Wider System Architecture
 
-This repo is the **device** tier of a planned three-tier system:
+This repo now contains all three tiers of the system:
 
 ```
 browser (egui/WASM) ──WS/HTTP──► axum backend ──MQTT──► ESP32-C6 (this repo)
 ```
 
-The sibling repo **`../egui-axum-mqtt-demo`** (checked out alongside this one) is the reference template
-for the front+back tiers, demonstrating the patterns to bring in:
+The front+back tiers were brought in from the sibling template **`../egui-axum-mqtt-demo`** and live here
+as the `frontend`, `backend`, and `web-common` crates (see [Web stack](#web-stack-backend--frontend)).
+They keep the template's behaviour — four patterns: realtime send (WS→MQTT), poll (HTTP→cached MQTT),
+realtime receive (MQTT→WS push), and ping request/response with UUID correlation.
 
-- **Frontend**: `eframe`/`egui` 0.33 compiled to WASM, served by `trunk` (dev port 8080); talks to the
-  backend over WebSocket (realtime) + HTTP GET (poll) via `gloo-net`.
-- **Backend**: `axum` 0.8 on `0.0.0.0:3000`, bridging WebSocket ↔ MQTT with `rumqttc` 0.25; serves the
-  built WASM from `backend/dist/` and broadcasts MQTT → all WS clients via `tokio::broadcast`.
-- **Common**: shared `serde` message types (`ClientMsg`, `ServerMsg`, `LastMessage`).
-- Four patterns: realtime send (WS→MQTT), poll (HTTP→cached MQTT), realtime receive (MQTT→WS push),
-  and ping request/response with UUID correlation.
+**What's wired so far:** the ping round-trip reaches the device — the browser's "Ping Device" publishes to
+`esp32-wasmi-led/ping/request`, the firmware replies on `esp32-wasmi-led/ping/response`, and the backend
+relays the pong back to the browser.
 
-**Integration gap (future work):** the demo's topics
-(`egui-axum-mqtt-demo/{send,poll,live,ping/request,ping/response}`) don't yet align with this device's
-contract (`host-esp32c6/mbox` + the `Command` enum). The README roadmap calls for defining unified MQTT
-message formats across `cmd` topics so the backend can drive this device directly.
+**Integration gap (next):** the demo's other topics (`esp32-wasmi-led/{send,poll,live}`) still don't map
+to this device's control contract (`host-esp32c6/mbox` + the `Command`/`DirectCommand` enums). The plan is
+to define unified MQTT message formats so the backend can drive LED modes/pixels directly, then package
+all three tiers with docker-compose.
 
 ## Key Files
 
@@ -252,3 +297,8 @@ message formats across `cmd` topics so the backend can drive this device directl
 - `guest/build.rs` — Aseprite JSON → Rust frame-table code generation
 - `host-common/src/lib.rs` — serpentine index mapping (with unit tests)
 - `common/src/lib.rs` — panel dimension constants + pixel helpers shared by guest and host
+- `web-common/src/lib.rs` — shared WS/HTTP message types (`ClientMsg`/`ServerMsg`/`LastMessage`)
+- `backend/src/lib.rs` — axum router + MQTT↔WS/HTTP bridge (`DEFAULT_PREFIX`, `Topics`, `PingPayload`)
+- `backend/src/main.rs` — backend entrypoint (binds `0.0.0.0:3000`, connects `localhost:1883`)
+- `frontend/src/app.rs` — egui UI + WebSocket/HTTP client tasks
+- `frontend/Trunk.toml` — trunk config (dist → `backend/dist`, dev proxy → `:3000`)

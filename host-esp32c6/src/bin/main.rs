@@ -22,7 +22,7 @@ use host_esp32c6::log;
 use host_esp32c6::mqtt::mqtt_task;
 use host_esp32c6::net::{connection, net_task};
 use host_esp32c6::wasm::wasm_task;
-use host_esp32c6::{Mode, MODE};
+use host_esp32c6::{MODE, Mode};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -33,7 +33,7 @@ macro_rules! mk_static {
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit().write(($val));
+        let x = STATIC_CELL.uninit().write($val);
         x
     }};
 }
@@ -60,7 +60,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let esp_radio_ctrl = &*mk_static!(Controller<'static>, esp_radio::init().unwrap());
 
     let (controller, interfaces) =
-        esp_radio::wifi::new(&esp_radio_ctrl, peripherals.WIFI, Default::default()).unwrap();
+        esp_radio::wifi::new(esp_radio_ctrl, peripherals.WIFI, Default::default()).unwrap();
 
     let wifi_interface = interfaces.sta;
 
